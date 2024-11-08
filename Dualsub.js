@@ -85,9 +85,9 @@ let default_settings = {
     },
     Hulu: {
         type: "Google", // Google, DeepL, External, Disable
-        lang: "English",
+        lang: "English + Chinese",
         sl: "auto",
-        tl: "en",
+        tl: "zh",
         line: "s", // f, s
         dkey: "null", // DeepL API key
         s_subtitles_url: "null",
