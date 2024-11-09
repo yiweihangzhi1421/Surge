@@ -14,7 +14,6 @@
 
         [MITM]
         hostname = *.media.dssott.com, *.media.starott.com, *.api.hbo.com, *.hbomaxcdn.com, *.huluim.com, *.nflxvideo.net, *.cbsaavideo.com, *.cbsivideo.com, *.cloudfront.net, *.akamaihd.net, *.avi-cdn.net, *.youtube.com
-
     作者:
         Telegram: Neurogram
         GitHub: Neurogram-R
@@ -26,11 +25,11 @@ let headers = $request.headers
 // 固定为中英文双语字幕设置
 let default_settings = {
     Disney: {
-        type: "Google", // 使用 Google 机器翻译
+        type: "Google", // 启用 Google 机器翻译
         lang: "English + Chinese", // 固定为中英文双语
-        sl: "auto",
-        tl: "zh", // 目标语言为中文
-        line: "s" // 双行字幕显示
+        sl: "auto", // 源语言自动检测
+        tl: "zh", // 目标语言设置为中文
+        line: "s" // 双行字幕
     },
     HBOMax: {
         type: "Google",
@@ -99,6 +98,9 @@ let body = $response.body
 
 if (!body) $done({})
 
+// 调试输出：检查字幕文件是否正确加载
+console.log("正在处理的字幕文件 URL: ", url);
+
 // 处理 YouTube 双语字幕
 if (service == "YouTube") {
     let patt = new RegExp(`lang=${setting.tl}`)
@@ -107,6 +109,7 @@ if (service == "YouTube") {
     let options = { url: t_url, headers: headers }
 
     $httpClient.get(options, function (error, response, data) {
+        console.log("YouTube 字幕翻译请求成功，开始处理...");
         if (setting.line == "s") $done({ body: data })
         let timeline = body.match(/<p t="\d+" d="\d+">/g)
 
@@ -133,6 +136,7 @@ if (setting.type == "Google" && url.match(/\.(web)?vtt/)) {
 }
 
 async function machine_subtitles(type) {
+    console.log("开始翻译字幕...");
     body = body.replace(/\r/g, "")
     body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
     let dialogue = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+/g)
@@ -150,6 +154,7 @@ async function machine_subtitles(type) {
         }
 
         let trans = await send_request(options, "post")
+        console.log("Google 翻译返回：", trans);  // 打印翻译结果
         if (trans.sentences) {
             let sentences = trans.sentences
             for (var k in sentences) {
@@ -171,6 +176,7 @@ async function machine_subtitles(type) {
         }
     }
 
+    console.log("最终字幕内容: ", body);  // 打印最终字幕内容
     $done({ body })
 }
 
