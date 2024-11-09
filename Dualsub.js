@@ -2,7 +2,7 @@
     Dualsub for Surge by Neurogram
 
         - 支持 Disney+, HBO Max, Netflix, Hulu 等流媒体的双语字幕
-        - 自定义语言支持
+        - 使用 Google 翻译网页进行翻译
 
     Author:
         Telegram: Neurogram
@@ -20,7 +20,6 @@ let default_settings = {
         sl: "auto",
         tl: "English [CC]",
         line: "s",
-        dkey: "null",
         s_subtitles_url: "null",
         t_subtitles_url: "null",
         subtitles: "null"
@@ -31,7 +30,6 @@ let default_settings = {
         sl: "auto",
         tl: "en-US SDH",
         line: "s",
-        dkey: "null",
         s_subtitles_url: "null",
         t_subtitles_url: "null",
         subtitles: "null"
@@ -42,7 +40,6 @@ let default_settings = {
         sl: "auto",
         tl: "zh",
         line: "s",
-        dkey: "null",
         s_subtitles_url: "null",
         t_subtitles_url: "null",
         subtitles: "null"
@@ -53,7 +50,6 @@ let default_settings = {
         sl: "auto",
         tl: "en",
         line: "s",
-        dkey: "null",
         s_subtitles_url: "null",
         t_subtitles_url: "null",
         subtitles: "null"
@@ -90,36 +86,27 @@ let body = $response.body;
 if (!body) $done({});
 
 // 处理翻译字幕
-if (setting.type === "Google" || setting.type === "DeepL") {
+if (setting.type === "Google") {
     let subtitles_urls_data = setting.t_subtitles_url; // 获取原始字幕 URL
 
     // 从字幕 URL 获取原始字幕文本
     send_request({ url: subtitles_urls_data, method: "GET" })
         .then(originalSubtitles => {
-            // 发送翻译请求到 Google 翻译 API
-            return send_request({
-                url: 'https://translation.googleapis.com/language/translate/v2', // 替换为您的翻译 API URL
-                method: "POST",
-                body: JSON.stringify({
-                    q: originalSubtitles,
-                    target: setting.tl,
-                    key: setting.dkey // 如果需要 API 密钥
-                }),
-                headers: {
-                    "Content-Type": "application/json"
-                }
-            });
+            console.log("原始字幕获取成功:", originalSubtitles); // 调试输出
+            // 构造 Google 翻译 URL
+            let encodeSubtitles = encodeURIComponent(originalSubtitles);
+            let translateUrl = `https://translate.google.com/?sl=auto&tl=${setting.tl}&text=${encodeSubtitles}&op=translate`;
+
+            // 发送请求到 Google 翻译
+            return send_request({ url: translateUrl, method: "GET" });
         })
         .then(translatedData => {
-            // 确保翻译数据格式正确
-            if (translatedData && translatedData.data && translatedData.data.translations.length > 0) {
-                let translatedSubtitles = translatedData.data.translations[0].translatedText;
+            // 从翻译网页中提取翻译结果
+            let translatedSubtitles = extractTranslation(translatedData);
+            console.log("翻译后的字幕:", translatedSubtitles); // 调试输出
 
-                // 合并翻译内容与原字幕，使用换行分隔
-                body = mergeSubtitles(originalSubtitles, translatedSubtitles);
-            } else {
-                console.error("翻译数据格式不正确:", translatedData);
-            }
+            // 合并翻译内容与原字幕
+            body = mergeSubtitles(originalSubtitles, translatedSubtitles);
             $done({ body });
         })
         .catch(error => {
@@ -138,13 +125,17 @@ function send_request(options) {
                 if (error) return reject(error);
                 resolve(data); // 直接返回数据
             });
-        } else if (options.method === "POST") {
-            $httpClient.post(options, (error, response, data) => {
-                if (error) return reject(error);
-                resolve(JSON.parse(data)); // 解析 JSON 数据
-            });
         }
     });
+}
+
+// 提取翻译结果的函数
+function extractTranslation(html) {
+    let match = html.match(/<span class="tlid-translation translation">(.*?)<\/span>/);
+    if (match && match[1]) {
+        return match[1].replace(/<[^>]*>/g, ''); // 移除任何 HTML 标签
+    }
+    return "翻译失败";
 }
 
 // 合并字幕的函数
