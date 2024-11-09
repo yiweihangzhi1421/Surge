@@ -93,7 +93,7 @@ if (!body) $done({});
 if (setting.type === "Google" || setting.type === "DeepL") {
     let subtitles_urls_data = setting.t_subtitles_url; // 获取原始字幕 URL
 
-    // 假设这里是从字幕 URL 获取的字幕文本
+    // 从字幕 URL 获取原始字幕文本
     send_request({ url: subtitles_urls_data, method: "GET" })
         .then(originalSubtitles => {
             // 发送翻译请求到 Google 翻译 API
@@ -111,11 +111,15 @@ if (setting.type === "Google" || setting.type === "DeepL") {
             });
         })
         .then(translatedData => {
-            // 获取翻译后的字幕文本
-            let translatedSubtitles = translatedData.data.translations[0].translatedText;
+            // 确保翻译数据格式正确
+            if (translatedData && translatedData.data && translatedData.data.translations.length > 0) {
+                let translatedSubtitles = translatedData.data.translations[0].translatedText;
 
-            // 合并翻译内容与原字幕
-            body = mergeSubtitles(body, translatedSubtitles);
+                // 合并翻译内容与原字幕，使用换行分隔
+                body = mergeSubtitles(originalSubtitles, translatedSubtitles);
+            } else {
+                console.error("翻译数据格式不正确:", translatedData);
+            }
             $done({ body });
         })
         .catch(error => {
@@ -132,12 +136,12 @@ function send_request(options) {
         if (options.method === "GET") {
             $httpClient.get(options, (error, response, data) => {
                 if (error) return reject(error);
-                resolve(JSON.parse(data));
+                resolve(data); // 直接返回数据
             });
         } else if (options.method === "POST") {
             $httpClient.post(options, (error, response, data) => {
                 if (error) return reject(error);
-                resolve(JSON.parse(data));
+                resolve(JSON.parse(data)); // 解析 JSON 数据
             });
         }
     });
@@ -145,7 +149,6 @@ function send_request(options) {
 
 // 合并字幕的函数
 function mergeSubtitles(original, translated) {
-    // 这里您可以实现合并逻辑
-    // 简单示例：将翻译的字幕添加到原始字幕后面
-    return original + "\n\n翻译:\n" + translated;
+    // 使用换行符合并原始字幕和翻译字幕
+    return `${original}\n\n翻译:\n${translated}`;
 }
