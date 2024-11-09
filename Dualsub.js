@@ -29,49 +29,49 @@ let default_settings = {
         lang: "English + Chinese", // 固定为中英文双语
         sl: "auto", // 源语言自动检测
         tl: "zh", // 目标语言设置为中文
-        line: "s" // 双行字幕
+        line: "f" // 单行字幕
     },
     HBOMax: {
         type: "Google",
         lang: "English + Chinese",
         sl: "auto",
         tl: "zh",
-        line: "s"
+        line: "f"
     },
     Hulu: {
         type: "Google",
         lang: "English + Chinese",
         sl: "auto",
         tl: "zh",
-        line: "s"
+        line: "f"
     },
     Netflix: {
         type: "Google",
         lang: "English + Chinese",
         sl: "auto",
         tl: "zh",
-        line: "s"
+        line: "f"
     },
     Paramount: {
         type: "Google",
         lang: "English + Chinese",
         sl: "auto",
         tl: "zh",
-        line: "s"
+        line: "f"
     },
     PrimeVideo: {
         type: "Google",
         lang: "English + Chinese",
         sl: "auto",
         tl: "zh",
-        line: "s"
+        line: "f"
     },
     YouTube: {
         type: "Enable", // 启用双语字幕
         lang: "English + Chinese",
         sl: "auto",
         tl: "zh",
-        line: "s"
+        line: "f"
     }
 }
 
