@@ -10,10 +10,10 @@
         [Script]
 
         // all in one
-        Dualsub = type=http-response,pattern=^http.+(media.(dss|star)ott|manifests.v2.api.hbo|hbomaxcdn|nflxvideo|cbs(aa|i)video|cloudfront|akamaihd|avi-cdn|huluim|youtube).(com|net)\/(.+\.vtt($|\?m=\d+)|.+-all-.+\.m3u8.*|hls\.m3u8.+|\?o=\d+&v=\d+&e=.+|\w+\/2\$.+\/[a-zA-Z0-9-]+\.m3u8|api\/timedtext.+),requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        MUBI = type=http-response,pattern=https:\/\/.+mubicdn.net\/.+\.webvtt,requires-body=1,max-size=0,timeout=30,script-path=https://raw.githubusercontent.com/Neurogram-R/Surge/master/Dualsub.js
 
         [MITM]
-        hostname = *.media.dssott.com, *.media.starott.com, *.api.hbo.com, *.hbomaxcdn.com, *.huluim.com, *.nflxvideo.net, *.cbsaavideo.com, *.cbsivideo.com, *.cloudfront.net, *.akamaihd.net, *.avi-cdn.net, *.youtube.com
+        hostname = *.mubicdn.net
     作者:
         Telegram: Neurogram
         GitHub: Neurogram-R
@@ -87,6 +87,7 @@ if (url.match(/nflxvideo.net/)) service = "Netflix"
 if (url.match(/cbs(aa|i)video.com/)) service = "Paramount"
 if (url.match(/(cloudfront|akamaihd|avi-cdn).net/)) service = "PrimeVideo"
 if (url.match(/youtube.com/)) service = "YouTube"
+if (url.match(/mubicdn.net/)) service = "MUBI"  // 添加 mubicdn.net 的支持
 
 if (!service) $done({})
 
@@ -101,16 +102,16 @@ if (!body) $done({})
 // 调试输出：检查字幕文件是否正确加载
 console.log("正在处理的字幕文件 URL: ", url);
 
-// 处理 YouTube 双语字幕
-if (service == "YouTube") {
+// 处理 YouTube 和 MUBI 的字幕
+if (service == "YouTube" || service == "MUBI") {
     let patt = new RegExp(`lang=${setting.tl}`)
     if (url.match(patt) || url.match(/&tlang=/)) $done({})
     let t_url = `${url}&tlang=${setting.tl}`
     let options = { url: t_url, headers: headers }
 
     $httpClient.get(options, function (error, response, data) {
-        console.log("YouTube 字幕翻译请求成功，开始处理...");
-        if (setting.line == "s") $done({ body: data })
+        console.log("字幕翻译请求成功，开始处理...");
+        if (setting.line == "f") $done({ body: data })
         let timeline = body.match(/<p t="\d+" d="\d+">/g)
 
         if (url.match(/&kind=asr/)) {
@@ -122,7 +123,7 @@ if (service == "YouTube") {
         for (var i in timeline) {
             let patt = new RegExp(`${timeline[i]}([^<]+)<\\/p>`)
             if (body.match(patt) && data.match(patt)) {
-                if (setting.line == "s") body = body.replace(patt, `${timeline[i]}$1\n${data.match(patt)[1]}</p>`)
+                if (setting.line == "f") body = body.replace(patt, `${timeline[i]}$1\n${data.match(patt)[1]}</p>`)
             }
         }
 
