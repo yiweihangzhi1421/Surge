@@ -15,12 +15,12 @@ let headers = $request.headers;
 // 默认设置
 let default_settings = {
     Disney: {
-        type: "Official", // Official, Google, DeepL, External, Disable
+        type: "Official",
         lang: "English [CC]",
         sl: "auto",
         tl: "English [CC]",
-        line: "s", // f, s
-        dkey: "null", // DeepL API key
+        line: "s",
+        dkey: "null",
         s_subtitles_url: "null",
         t_subtitles_url: "null",
         subtitles: "null"
@@ -58,17 +58,6 @@ let default_settings = {
         t_subtitles_url: "null",
         subtitles: "null"
     },
-    PrimeVideo: {
-        type: "Official",
-        lang: "English [CC]",
-        sl: "auto",
-        tl: "English [CC]",
-        line: "s",
-        dkey: "null",
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null"
-    },
     YouTube: {
         type: "Enable",
         lang: "English",
@@ -100,40 +89,63 @@ let body = $response.body;
 
 if (!body) $done({});
 
-// YouTube 特殊处理
-if (service == "YouTube") {
-    // 处理 YouTube 字幕的逻辑
-    // ...
-}
+// 处理翻译字幕
+if (setting.type === "Google" || setting.type === "DeepL") {
+    let subtitles_urls_data = setting.t_subtitles_url; // 获取原始字幕 URL
 
-// 处理官方字幕
-if (setting.type == "Official" && url.match(/\.m3u8/)) {
-    // 获取字幕 URL
-    // ...
-}
-
-// 处理机器翻译字幕
-if (setting.type == "Google" || setting.type == "DeepL") {
-    // 机器翻译逻辑
-    // ...
-}
-
-// 其他服务的处理逻辑
-$done({ body });
-
-function send_request(options, method) {
-    return new Promise((resolve, reject) => {
-        if (method == "get") {
-            $httpClient.get(options, function (error, response, data) {
-                if (error) return reject('Error');
-                resolve(data);
+    // 假设这里是从字幕 URL 获取的字幕文本
+    send_request({ url: subtitles_urls_data, method: "GET" })
+        .then(originalSubtitles => {
+            // 发送翻译请求到 Google 翻译 API
+            return send_request({
+                url: 'https://translation.googleapis.com/language/translate/v2', // 替换为您的翻译 API URL
+                method: "POST",
+                body: JSON.stringify({
+                    q: originalSubtitles,
+                    target: setting.tl,
+                    key: setting.dkey // 如果需要 API 密钥
+                }),
+                headers: {
+                    "Content-Type": "application/json"
+                }
             });
-        }
-        if (method == "post") {
-            $httpClient.post(options, function (error, response, data) {
-                if (error) return reject('Error');
+        })
+        .then(translatedData => {
+            // 获取翻译后的字幕文本
+            let translatedSubtitles = translatedData.data.translations[0].translatedText;
+
+            // 合并翻译内容与原字幕
+            body = mergeSubtitles(body, translatedSubtitles);
+            $done({ body });
+        })
+        .catch(error => {
+            console.error("翻译请求失败:", error);
+            $done({});
+        });
+} else {
+    $done({ body });
+}
+
+// 网络请求函数
+function send_request(options) {
+    return new Promise((resolve, reject) => {
+        if (options.method === "GET") {
+            $httpClient.get(options, (error, response, data) => {
+                if (error) return reject(error);
+                resolve(JSON.parse(data));
+            });
+        } else if (options.method === "POST") {
+            $httpClient.post(options, (error, response, data) => {
+                if (error) return reject(error);
                 resolve(JSON.parse(data));
             });
         }
     });
+}
+
+// 合并字幕的函数
+function mergeSubtitles(original, translated) {
+    // 这里您可以实现合并逻辑
+    // 简单示例：将翻译的字幕添加到原始字幕后面
+    return original + "\n\n翻译:\n" + translated;
 }
