@@ -29,13 +29,16 @@ send_request({ url: subtitles_url, method: "GET" })
     .then(originalSubtitles => {
         console.log("原始字幕获取成功:", originalSubtitles); // 调试输出
 
-        // 处理二进制数据
+        // 处理 WebVTT 格式
         if (typeof originalSubtitles !== "string") {
             originalSubtitles = new TextDecoder("utf-8").decode(originalSubtitles);
         }
 
+        // 提取字幕文本
+        let extractedText = extractTextFromVTT(originalSubtitles);
+
         // 构造 Google 翻译 URL
-        let encodeSubtitles = encodeURIComponent(originalSubtitles);
+        let encodeSubtitles = encodeURIComponent(extractedText);
         let translateUrl = `https://translate.google.com/?sl=${originalLang}&tl=${translatedLang}&text=${encodeSubtitles}&op=translate`;
 
         // 发送请求到 Google 翻译
@@ -87,6 +90,16 @@ function extractTranslation(html) {
         return match[1].replace(/<[^>]*>/g, ''); // 移除任何 HTML 标签
     }
     return "翻译失败"; // 返回失败信息
+}
+
+// 从 WebVTT 格式提取文本的函数
+function extractTextFromVTT(vttContent) {
+    // 移除 WebVTT 文件的头部和时间戳
+    return vttContent
+        .split('\n')
+        .filter(line => !line.startsWith('WEBVTT') && !line.includes('-->'))
+        .join(' ')
+        .trim();
 }
 
 // 合并字幕的函数
