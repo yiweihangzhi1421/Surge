@@ -29,6 +29,11 @@ send_request({ url: subtitles_url, method: "GET" })
     .then(originalSubtitles => {
         console.log("原始字幕获取成功:", originalSubtitles); // 调试输出
 
+        // 处理二进制数据
+        if (typeof originalSubtitles !== "string") {
+            originalSubtitles = new TextDecoder("utf-8").decode(originalSubtitles);
+        }
+
         // 构造 Google 翻译 URL
         let encodeSubtitles = encodeURIComponent(originalSubtitles);
         let translateUrl = `https://translate.google.com/?sl=${originalLang}&tl=${translatedLang}&text=${encodeSubtitles}&op=translate`;
