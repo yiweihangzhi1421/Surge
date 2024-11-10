@@ -13,7 +13,22 @@ let headers = $request.headers
 let default_settings = {
     Disney: { /* ... existing Disney settings ... */ },
     HBOMax: { /* ... existing HBO Max settings ... */ },
-    Hulu: { /* ... existing Hulu settings ... */ },
+    Hulu: {
+        type: "Google",
+        lang: "English",
+        sl: "auto",
+        tl: "en",
+        line: "s",
+        dkey: "null",
+        s_subtitles_url: "null",
+        t_subtitles_url: "null",
+        subtitles: "null",
+        subtitles_type: "null",
+        subtitles_sl: "null",
+        subtitles_tl: "null",
+        subtitles_line: "null",
+        external_subtitles: "null"
+    },
     Netflix: { /* ... existing Netflix settings ... */ },
     Paramount: { /* ... existing Paramount settings ... */ },
     PrimeVideo: { /* ... existing Prime Video settings ... */ },
@@ -151,18 +166,18 @@ async function machine_subtitles(type) {
     if (type == "Google") {
         for (let p in s_sentences) {
             let options = {
-                url: `https://translate.google.com/translate_a/single?client=it&dt=t&sl=${setting.sl}&tl=${setting.tl}&q=${encodeURIComponent(s_sentences[p].join("\n"))}`,
-                headers: { "User-Agent": "GoogleTranslate/6.29.0.02 (iPhone; iOS 15.4; en; iPhone14,2)" }
+                url: `https://translate.google.com/_/TranslateWebserverUi/data/batchexecute`,
+                headers: headers,
+                body: `f.req=${JSON.stringify([["^new^", JSON.stringify([["translations", "auto", "en", "en"],s_sentences[p]])]])}`
             }
-            let trans = await send_request(options, "get")
-            if (trans.sentences) {
-                trans.sentences.forEach(sentence => {
-                    if (sentence.trans) trans_result.push(sentence.trans.replace(/\n/g, " ").replace(/〜|～/g, "~"))
-                })
-            }
+            let trans = await send_request(options, "post")
+            trans = JSON.parse(trans.body)
+            trans.sentences.forEach(sentence => {
+                if (sentence.trans) trans_result.push(sentence.trans.replace(/\n/g, " ").replace(/〜|～/g, "~"))
+            })
         }
     }
-    if (type == "DeepL") { /* ... DeepL translation logic ... */ }
+
     if (trans_result.length > 0) {
         let g_t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g)
         for (let j in dialogue) {
