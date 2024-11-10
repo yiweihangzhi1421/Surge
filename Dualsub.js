@@ -1,25 +1,69 @@
 /*
     Dualsub for Surge by Neurogram
+ 
+        - Disney+, Star+, HBO Max, Prime Video, YouTube official bilingual subtitles
+        - Disney+, Star+, HBO Max, Hulu, Netflix, Paramount+, Prime Video, etc. external subtitles
+        - Disney+, Star+, HBO Max, Hulu, Netflix, Paramount+, Prime Video, etc. machine translation bilingual subtitles (Google, DeepL)
+        - Customized language support
+ 
+    Manual:
+        Setting tool for Shortcuts: https://www.icloud.com/shortcuts/8ec4a2a3af514282bf27a11050f39fc2
 
-    - Disney+, Star+, HBO Max, Prime Video, YouTube official bilingual subtitles
-    - Disney+, Star+, HBO Max, Hulu, Netflix, Paramount+, Prime Video, etc. external subtitles
-    - Disney+, Star+, HBO Max, Hulu, Netflix, Paramount+, Prime Video, etc. machine translation bilingual subtitles (Google, DeepL)
-    - Customized language support
+        Surge:
+
+        [Script]
+
+        // all in one
+        Dualsub = type=http-response,pattern=^http.+(media.(dss|star)ott|manifests.v2.api.hbo|hbomaxcdn|nflxvideo|cbs(aa|i)video|cloudfront|akamaihd|avi-cdn|huluim|youtube|mubicdn|peacocktv).(com|net)\/(.+\.vtt($|\?m=\d+)|.+-all-.+\.m3u8.*|hls\.m3u8.+|\?o=\d+&v=\d+&e=.+|\w+\/2\$.+\/[a-zA-Z0-9-]+\.m3u8|api\/timedtext.+),requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        Dualsub-setting = type=http-request,pattern=^http.+(setting|general).(media.dssott|hbomaxcdn|nflxvideo|youtube|cbsivideo|cloudfront|huluim|mubicdn|peacocktv).(com|net)\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+
+        // individual
+        DisneyPlus-Dualsub = type=http-response,pattern=https:\/\/.+media.(dss|star)ott.com\/ps01\/disney\/.+(\.vtt|-all-.+\.m3u8.*),requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        DisneyPlus-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.media.dssott.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+ 
+        HBO-Max-Dualsub = type=http-response,pattern=https:\/\/(manifests.v2.api.hbo.com|.+hbomaxcdn.com)\/(hls.m3u8.+|video.+\.vtt),requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        HBO-Max-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.hbomaxcdn.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+
+        Hulu-Dualsub = type=http-response,pattern=^http.+huluim.com\/.+\.vtt$,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        Hulu-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.huluim.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+
+        Netflix-Dualsub = type=http-response,pattern=https:\/\/.+nflxvideo.net\/\?o=\d+&v=\d+&e=.+,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        Netflix-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.nflxvideo.net\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+
+        ParamountPlus-Dualsub = type=http-response,pattern=https:\/\/.+cbs(aa|i)video.com\/.+\.vtt(\?m=\d+)*,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        ParamountPlus-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.cbsivideo.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+
+        Prime-Video-Dualsub = type=http-response,pattern=https:\/\/.+(cloudfront|akamaihd|avi-cdn).net\/(.+\.vtt|\w+\/2\$.+\/[a-zA-Z0-9-]+\.m3u8),requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        Prime-Video-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.cloudfront.net\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+
+        YouTube-Dualsub = type=http-response,pattern=https:\/\/www.youtube.com\/api\/timedtext.+,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        YouTube-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.youtube.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+
+        Mubi-Dualsub = type=http-response,pattern=https:\/\/.+mubicdn.net\/.+\.webvtt,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        Mubi-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.mubicdn.net\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+
+        Peacock-Dualsub = type=http-response,pattern=https:\/\/.+peacocktv.com\/.+\.webvtt,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
+        Peacock-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.peacocktv.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
+
+        [MITM]
+        hostname = *.media.dssott.com, *.media.starott.com, *.api.hbo.com, *.hbomaxcdn.com, *.huluim.com, *.nflxvideo.net, *.cbsaavideo.com, *.cbsivideo.com, *.cloudfront.net, *.akamaihd.net, *.avi-cdn.net, *.youtube.com, *.mubicdn.net, *.peacocktv.com
+
+    Author:
+        Telegram: Neurogram
+        GitHub: Neurogram-R
 */
 
 let url = $request.url
 let headers = $request.headers
 
 let default_settings = {
-    Disney: { /* ... existing Disney settings ... */ },
-    HBOMax: { /* ... existing HBO Max settings ... */ },
-    Hulu: {
-        type: "Google",
-        lang: "English",
+    Disney: {
+        type: "Official", // Official, Google, DeepL, External, Disable
+        lang: "English [CC]",
         sl: "auto",
-        tl: "en",
-        line: "s",
-        dkey: "null",
+        tl: "zh", // 改成中文
+        line: "s", // f, s
+        dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
         subtitles: "null",
@@ -29,16 +73,117 @@ let default_settings = {
         subtitles_line: "null",
         external_subtitles: "null"
     },
-    Netflix: { /* ... existing Netflix settings ... */ },
-    Paramount: { /* ... existing Paramount settings ... */ },
-    PrimeVideo: { /* ... existing Prime Video settings ... */ },
-    Mubi: {
-        type: "Google",
+    HBOMax: {
+        type: "Official", // Official, Google, DeepL, External, Disable
+        lang: "English CC",
+        sl: "auto",
+        tl: "zh", // 改成中文
+        line: "s", // f, s
+        dkey: "null", // DeepL API key
+        s_subtitles_url: "null",
+        t_subtitles_url: "null",
+        subtitles: "null",
+        subtitles_type: "null",
+        subtitles_sl: "null",
+        subtitles_tl: "null",
+        subtitles_line: "null",
+        external_subtitles: "null"
+    },
+    Hulu: {
+        type: "Google", // Google, DeepL, External, Disable
         lang: "English",
         sl: "auto",
-        tl: "en",
-        line: "s",
-        dkey: "null",
+        tl: "zh", // 改成中文
+        line: "s", // f, s
+        dkey: "null", // DeepL API key
+        s_subtitles_url: "null",
+        t_subtitles_url: "null",
+        subtitles: "null",
+        subtitles_type: "null",
+        subtitles_sl: "null",
+        subtitles_tl: "null",
+        subtitles_line: "null",
+        external_subtitles: "null"
+    },
+    Netflix: {
+        type: "Google", // Google, DeepL, External, Disable
+        lang: "English",
+        sl: "auto",
+        tl: "zh", // 改成中文
+        line: "s", // f, s
+        dkey: "null", // DeepL API key
+        s_subtitles_url: "null",
+        t_subtitles_url: "null",
+        subtitles: "null",
+        subtitles_type: "null",
+        subtitles_sl: "null",
+        subtitles_tl: "null",
+        subtitles_line: "null",
+        external_subtitles: "null"
+    },
+    Paramount: {
+        type: "Google", // Google, DeepL, External, Disable
+        lang: "English",
+        sl: "auto",
+        tl: "zh", // 改成中文
+        line: "s", // f, s
+        dkey: "null", // DeepL API key
+        s_subtitles_url: "null",
+        t_subtitles_url: "null",
+        subtitles: "null",
+        subtitles_type: "null",
+        subtitles_sl: "null",
+        subtitles_tl: "null",
+        subtitles_line: "null",
+        external_subtitles: "null"
+    },
+    PrimeVideo: {
+        type: "Official", // Official, Google, DeepL, External, Disable
+        lang: "English [CC]",
+        sl: "auto",
+        tl: "zh", // 改成中文
+        line: "s", // f, s
+        dkey: "null", // DeepL API key
+        s_subtitles_url: "null",
+        t_subtitles_url: "null",
+        subtitles: "null",
+        subtitles_type: "null",
+        subtitles_sl: "null",
+        subtitles_tl: "null",
+        subtitles_line: "null",
+        external_subtitles: "null"
+    },
+    General: {
+        service: "null",
+        type: "Google", // Google, DeepL, External, Disable
+        lang: "English",
+        sl: "auto",
+        tl: "zh", // 改成中文
+        line: "s", // f, s
+        dkey: "null", // DeepL API key
+        s_subtitles_url: "null",
+        t_subtitles_url: "null",
+        subtitles: "null",
+        subtitles_type: "null",
+        subtitles_sl: "null",
+        subtitles_tl: "null",
+        subtitles_line: "null",
+        external_subtitles: "null"
+    },
+    YouTube: {
+        type: "Enable", // Enable, Disable
+        lang: "English",
+        sl: "auto",
+        tl: "zh", // 改成中文
+        line: "sl"
+    },
+    Mubi: {
+        type: "Google", // Google, DeepL, External, Disable
+        lang: "English",
+        sl: "auto",
+        tl: "zh", // 改成中文
+        line: "s", // f, s
+        dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
         subtitles: "null",
@@ -49,12 +194,12 @@ let default_settings = {
         external_subtitles: "null"
     },
     Peacock: {
-        type: "Google",
+        type: "Google", // Google, DeepL, External, Disable
         lang: "English",
         sl: "auto",
-        tl: "en",
-        line: "s",
-        dkey: "null",
+        tl: "zh", // 改成中文
+        line: "s", // f, s
+        dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
         subtitles: "null",
@@ -63,10 +208,10 @@ let default_settings = {
         subtitles_tl: "null",
         subtitles_line: "null",
         external_subtitles: "null"
-    },
-    YouTube: { /* ... existing YouTube settings ... */ }
-}
+    }
+};
 
+// 读取和处理设置
 let settings = $persistentStore.read()
 if (!settings) settings = default_settings
 if (typeof (settings) == "string") settings = JSON.parse(settings)
@@ -78,14 +223,28 @@ if (url.match(/huluim.com/)) service = "Hulu"
 if (url.match(/nflxvideo.net/)) service = "Netflix"
 if (url.match(/cbs(aa|i)video.com/)) service = "Paramount"
 if (url.match(/(cloudfront|akamaihd|avi-cdn).net/)) service = "PrimeVideo"
-if (url.match(/mubicdn.net/)) service = "Mubi"
-if (url.match(/peacocktv.com/)) service = "Peacock"
+if (url.match(/general.media/)) service = "General"
 if (url.match(/youtube.com/)) service = "YouTube"
+if (url.match(/https:\/\/.+mubicdn.net\/.+\.webvtt/)) service = "Mubi"
+if (url.match(/https:\/\/.+peacocktv.com\/.+\.webvtt/)) service = "Peacock"
+
+if (settings.General) {
+    let general_service = settings.General.service.split(", ")
+    for (var s in general_service) {
+        let patt = new RegExp(general_service[s])
+        if (url.match(patt)) {
+            service = "General"
+            break
+        }
+    }
+}
 
 if (!service) $done({})
+
 if (!settings[service]) settings[service] = default_settings[service]
 let setting = settings[service]
 
+// 处理 `action=get` 和 `action=set` 请求
 if (url.match(/action=get/)) {
     delete setting.t_subtitles_url
     delete setting.subtitles
@@ -119,20 +278,111 @@ if (url.match(/action=set/)) {
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } })
 }
 
+// 处理不同的字幕逻辑
 if (setting.type == "Disable") $done({})
+if (setting.type != "Official" && url.match(/\.m3u8/)) $done({})
 
 let body = $response.body
 if (!body) $done({})
 
-// Add logic for Mubi and Peacock subtitles
-if (url.match(/\.(web)?vtt/) || service == "Netflix" || service == "Mubi" || service == "Peacock") {
-    if (service != "Netflix" && url == setting.s_subtitles_url && setting.subtitles != "null" && setting.subtitles_type == setting.type && setting.subtitles_sl == setting.sl && setting.subtitles_tl == setting.tl && setting.subtitles_line == setting.line) {
-        $done({ body: setting.subtitles })
+// 继续处理各平台字幕逻辑...
+// 处理 YouTube 的字幕逻辑
+if (service == "YouTube") {
+    let patt = new RegExp(`lang=${setting.tl}`)
+
+    if (url.replace(/&lang=zh(-Hans)*&/, "&lang=zh-CN&").replace(/&lang=zh-Hant&/, "&lang=zh-TW&").match(patt) || url.match(/&tlang=/)) $done({})
+
+    let t_url = `${url}&tlang=${setting.tl == "zh-CN" ? "zh-Hans" : setting.tl == "zh-TW" ? "zh-Hant" : setting.tl}`
+
+    let options = {
+        url: t_url,
+        headers: headers
     }
 
+    $httpClient.get(options, function (error, response, data) {
+        if (setting.line == "sl") $done({ body: data })
+        let timeline = body.match(/<p t="\d+" d="\d+">/g)
+
+        if (url.match(/&kind=asr/)) {
+            body = body.replace(/<\/?s[^>]*>/g, "")
+            data = data.replace(/<\/?s[^>]*>/g, "")
+            timeline = body.match(/<p t="\d+" d="\d+"[^>]+>/g)
+        }
+
+        for (let i in timeline) {
+            let patt = new RegExp(`${timeline[i]}([^<]+)<\\/p>`)
+            if (body.match(patt) && data.match(patt)) {
+                if (setting.line == "s") body = body.replace(patt, `${timeline[i]}$1\n${data.match(patt)[1]}</p>`)
+                if (setting.line == "f") body = body.replace(patt, `${timeline[i]}${data.match(patt)[1]}\n$1</p>`)
+            }
+        }
+
+        $done({ body })
+    })
+}
+
+// 处理各个平台的字幕请求和翻译逻辑
+let subtitles_urls_data = setting.t_subtitles_url
+
+if (setting.type == "Official" && url.match(/\.m3u8/)) {
+    settings[service].t_subtitles_url = "null"
+    $persistentStore.write(JSON.stringify(settings))
+
+    let patt = new RegExp(`TYPE=SUBTITLES.+NAME="${setting.tl.replace(/(\[|\]|\(|\))/g, "\\$1")}.+URI="([^"]+)`)
+
+    if (body.match(patt)) {
+        let host = ""
+        if (service == "Disney") host = url.match(/https.+media.(dss|star)ott.com\/ps01\/disney\/[^\/]+\//)[0]
+
+        let subtitles_data_link = `${host}${body.match(patt)[1]}`
+
+        if (service == "PrimeVideo") {
+            let correct_host = subtitles_data_link.match(/https:\/\/(.+(cloudfront|akamaihd|avi-cdn).net)/)[1]
+            headers.Host = correct_host
+        }
+
+        let options = {
+            url: subtitles_data_link,
+            headers: headers
+        }
+
+        $httpClient.get(options, function (error, response, data) {
+            let subtitles_data = ""
+            if (service == "Disney") subtitles_data = data.match(/.+-MAIN.+\.vtt/g)
+            if (service == "HBOMax") subtitles_data = data.match(/http.+\.vtt/g)
+            if (service == "PrimeVideo") subtitles_data = data.match(/.+\.vtt/g)
+
+            if (service == "Disney") host = host + "r/"
+            if (service == "PrimeVideo") host = subtitles_data_link.match(/https.+\//)[0]
+
+            if (subtitles_data) {
+                subtitles_data = subtitles_data.join("\n")
+                if (service == "Disney" || service == "PrimeVideo") subtitles_data = subtitles_data.replace(/(.+)/g, `${host}$1`)
+                settings[service].t_subtitles_url = subtitles_data
+                $persistentStore.write(JSON.stringify(settings))
+            }
+
+            if (service == "Disney" && subtitles_data_link.match(/.+-MAIN.+/) && data.match(/,\nseg.+\.vtt/g)) {
+                subtitles_data = data.match(/,\nseg.+\.vtt/g)
+                let url_path = subtitles_data_link.match(/\/r\/(.+)/)[1].replace(/\w+\.m3u8/, "")
+                settings[service].t_subtitles_url = subtitles_data.join("\n").replace(/,\n/g, host + url_path)
+                $persistentStore.write(JSON.stringify(settings))
+            }
+
+            $done({})
+        })
+    }
+
+    if (!body.match(patt)) $done({})
+}
+
+// 处理 .vtt 字幕
+if (url.match(/\.(web)?vtt/) || service == "Netflix" || service == "General") {
+    if (service != "Netflix" && url == setting.s_subtitles_url && setting.subtitles != "null" && setting.subtitles_type == setting.type && setting.subtitles_sl == setting.sl && setting.subtitles_tl == setting.tl && setting.subtitles_line == setting.line) $done({ body: setting.subtitles })
+
     if (setting.type == "Official") {
-        if (setting.t_subtitles_url == "null") $done({})
-        let subtitles_urls_data = setting.t_subtitles_url.match(/.+\.vtt/g)
+        if (subtitles_urls_data == "null") $done({})
+        subtitles_urls_data = subtitles_urls_data.match(/.+\.vtt/g)
         if (subtitles_urls_data) official_subtitles(subtitles_urls_data)
     }
 
@@ -141,6 +391,7 @@ if (url.match(/\.(web)?vtt/) || service == "Netflix" || service == "Mubi" || ser
     if (setting.type == "External") external_subtitles()
 }
 
+// 外部字幕处理函数
 function external_subtitles() {
     let patt = new RegExp(`(\\d+\\n)*\\d+:\\d\\d:\\d\\d.\\d\\d\\d --> \\d+:\\d\\d:\\d\\d.\\d.+(\\n|.)+`)
     if (!setting.external_subtitles.match(patt)) $done({})
@@ -150,6 +401,7 @@ function external_subtitles() {
     $done({ body })
 }
 
+// 机器翻译字幕处理函数
 async function machine_subtitles(type) {
     body = body.replace(/\r/g, "")
     body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
@@ -159,56 +411,134 @@ async function machine_subtitles(type) {
     if (!dialogue) $done({})
 
     let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g)
-    let s_sentences = dialogue.map((d, i) => `${type == "Google" ? "~" + i + "~" : "&text="}${d.replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "").replace(/<\/*(c\.[^>]+|i|c)>/g, "")}`)
+    let s_sentences = []
+    for (let i in dialogue) {
+        s_sentences.push(`${type == "Google" ? "~" + i + "~" : "&text="}${dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "")}`)
+    }
     s_sentences = groupAgain(s_sentences, type == "Google" ? 80 : 50)
 
+    let t_sentences = []
     let trans_result = []
+
+    // Google 翻译处理
     if (type == "Google") {
         for (let p in s_sentences) {
             let options = {
-                url: `https://translate.google.com/_/TranslateWebserverUi/data/batchexecute`,
-                headers: headers,
-                body: `f.req=${JSON.stringify([["^new^", JSON.stringify([["translations", "auto", "en", "en"],s_sentences[p]])]])}`
+                url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
+                headers: { "User-Agent": "GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)" },
+                body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
             }
             let trans = await send_request(options, "post")
-            trans = JSON.parse(trans.body)
-            trans.sentences.forEach(sentence => {
-                if (sentence.trans) trans_result.push(sentence.trans.replace(/\n/g, " ").replace(/〜|～/g, "~"))
-            })
+            if (trans.sentences) {
+                let sentences = trans.sentences
+                for (let k in sentences) {
+                    if (sentences[k].trans) trans_result.push(sentences[k].trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"))
+                }
+            }
+        }
+
+        if (trans_result.length > 0) {
+            t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g)
         }
     }
 
-    if (trans_result.length > 0) {
-        let g_t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g)
+    // DeepL 翻译处理
+    if (type == "DeepL") {
+        for (let l in s_sentences) {
+            let options = {
+                url: "https://api-free.deepl.com/v2/translate",
+                body: `auth_key=${setting.dkey}&target_lang=${setting.tl}${s_sentences[l].join("")}`
+            }
+            let trans = await send_request(options,
+                "post")
+
+            if (trans.translations) trans_result.push(trans.translations)
+        }
+
+        if (trans_result.length > 0) {
+            for (let o in trans_result) {
+                for (let u in trans_result[o]) {
+                    t_sentences.push(trans_result[o][u].text.replace(/\n/g, " "))
+                }
+            }
+        }
+    }
+
+    if (t_sentences.length > 0) {
+        let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n")
+
         for (let j in dialogue) {
             let patt = new RegExp(`(${timeline[j]})`)
+            if (setting.line == "s") patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`)
+
             let patt2 = new RegExp(`~${j}~\\s*(.+)`)
-            if (g_t_sentences && g_t_sentences[j]) body = body.replace(patt, `$1\n${g_t_sentences[j].replace(/~\d+~/, "").trim()}`)
+
+            if (g_t_sentences.match(patt2) && type == "Google") {
+                body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`)
+            }
+
+            if (type == "DeepL") {
+                body = body.replace(patt, `$1\n${t_sentences[j]}`)
+            }
         }
-        settings[service].s_subtitles_url = url
-        settings[service].subtitles = body
-        settings[service].subtitles_type = setting.type
-        settings[service].subtitles_sl = setting.sl
-        settings[service].subtitles_tl = setting.tl
-        settings[service].subtitles_line = setting.line
-        $persistentStore.write(JSON.stringify(settings))
+
+        if (service != "Netflix") {
+            settings[service].s_subtitles_url = url
+            settings[service].subtitles = body
+            settings[service].subtitles_type = setting.type
+            settings[service].subtitles_sl = setting.sl
+            settings[service].subtitles_tl = setting.tl
+            settings[service].subtitles_line = setting.line
+            $persistentStore.write(JSON.stringify(settings))
+        }
     }
+
     $done({ body })
 }
 
+// 官方字幕处理函数
 async function official_subtitles(subtitles_urls_data) {
     let result = []
+
+    if (service == "Disney" || service == "HBOMax") {
+        let subtitles_index = parseInt(url.match(/(\d+)\.vtt/)[1])
+        let start = subtitles_index - 3 < 0 ? 0 : subtitles_index - 3
+        subtitles_urls_data = subtitles_urls_data.slice(start, subtitles_index + 4)
+    }
+
     for (let k in subtitles_urls_data) {
-        let options = { url: subtitles_urls_data[k], headers: headers }
+        let options = {
+            url: subtitles_urls_data[k],
+            headers: headers
+        }
         result.push(await send_request(options, "get"))
     }
-    body = body.replace(/\r/g, "").replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+
+    body = body.replace(/\r/g, "")
+    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+
     let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g)
+
     for (let i in timeline) {
-        let patt = new RegExp(`${timeline[i]}`)
-        let dialogue = result.join("\n").match(new RegExp(`${timeline[i]}.+`, "g"))
-        if (dialogue) body = body.replace(patt, `$1\n${dialogue[0].split("\n")[1].trim()}`)
+        let patt1 = new RegExp(`(${timeline[i]})`)
+        if (setting.line == "s") patt1 = new RegExp(`(${timeline[i]}(\\n.+)+)`)
+
+        let time = timeline[i].match(/^\d+:\d\d:\d\d/)[0]
+        let patt2 = new RegExp(`${time}.\\d\\d\\d --> \\d+:\\d\\d:\\d\\d.\\d.+(\\n.+)+`)
+
+        let dialogue = result.join("\n\n").match(patt2)
+
+        if (dialogue) {
+            body = body.replace(
+                patt1,
+                `$1\n${dialogue[0]
+                    .replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "")
+                    .replace(/\n/, " ")}`
+            )
+        }
     }
+
     settings[service].s_subtitles_url = url
     settings[service].subtitles = body
     settings[service].subtitles_type = setting.type
@@ -216,18 +546,34 @@ async function official_subtitles(subtitles_urls_data) {
     settings[service].subtitles_tl = setting.tl
     settings[service].subtitles_line = setting.line
     $persistentStore.write(JSON.stringify(settings))
+
     $done({ body })
 }
 
+// 发送请求函数
 function send_request(options, method) {
     return new Promise((resolve, reject) => {
-        if (method == "get") $httpClient.get(options, (err, res, data) => err ? reject(err) : resolve(JSON.parse(data)))
-        if (method == "post") $httpClient.post(options, (err, res, data) => err ? reject(err) : resolve(JSON.parse(data)))
+        if (method == "get") {
+            $httpClient.get(options, function (error, response, data) {
+                if (error) return reject('Error')
+                resolve(data)
+            })
+        }
+
+        if (method == "post") {
+            $httpClient.post(options, function (error, response, data) {
+                if (error) return reject('Error')
+                resolve(JSON.parse(data))
+            })
+        }
     })
 }
 
+// 分组函数
 function groupAgain(data, num) {
     let result = []
-    for (let i = 0; i < data.length; i += num) result.push(data.slice(i, i + num))
+    for (let i = 0; i < data.length; i += num) {
+        result.push(data.slice(i, i + num))
+    }
     return result
 }
