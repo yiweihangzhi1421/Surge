@@ -16,7 +16,7 @@ let headers = $request.headers;
 
 let default_settings = {
     Hulu: {
-        type: "External", // Google, DeepL, External, Disable
+        type: "Google", // Google, DeepL, External, Disable
         lang: "English",
         sl: "auto",
         tl: "zh", // 改成中文
