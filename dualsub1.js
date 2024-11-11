@@ -1,10 +1,10 @@
 /*
     Dualsub for iOS in Surge by Neurogram
 
-        - Hulu, Mubi, Peacock official bilingual subtitles
-        - Hulu, Mubi, Peacock external subtitles
-        - Hulu, Mubi, Peacock machine translation bilingual subtitles (Google, DeepL)
-        - Customized language support for iOS
+    - Hulu, Mubi, Peacock official bilingual subtitles
+    - Hulu, Mubi, Peacock external subtitles
+    - Hulu, Mubi, Peacock machine translation bilingual subtitles (Google, DeepL)
+    - Customized language support for iOS
 
     Author:
         Telegram: Neurogram
@@ -120,6 +120,12 @@ if (setting.type !== "Official" && url.match(/\.m3u8/)) $done({});
 let body = $response.body;
 if (!body) $done({});
 
+// Hulu 特殊处理逻辑
+if (service === "Hulu" && url.match(/\.vtt$/)) {
+    body = handleHuluSubtitles(body);
+    $done({ body });
+}
+
 // 处理 .vtt 字幕
 if (url.match(/\.(web)?vtt/)) {
     if (url === setting.s_subtitles_url && setting.subtitles !== "null" && setting.subtitles_type === setting.type && setting.subtitles_sl === setting.sl && setting.subtitles_tl === setting.tl && setting.subtitles_line === setting.line) {
@@ -129,6 +135,28 @@ if (url.match(/\.(web)?vtt/)) {
     if (setting.type === "Google") machine_subtitles("Google");
     if (setting.type === "DeepL") machine_subtitles("DeepL");
     if (setting.type === "External") external_subtitles();
+}
+
+// Hulu 字幕特殊处理函数
+function handleHuluSubtitles(body) {
+    // 简化处理逻辑，确保格式正确
+    body = body.replace(/\r/g, ""); // 去除回车符
+    let dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d\n.+/g);
+    if (dialogue) {
+        // 添加简单的中英文合并逻辑
+        body = dialogue.map(line => {
+            let [time, text] = line.split("\n");
+            let translatedText = translateText(text); // 使用机器翻译或其他方式翻译文本
+            return `${time}\n${text}\n${translatedText}`;
+        }).join("\n\n");
+    }
+    return body;
+}
+
+// 简单的翻译文本函数（可替换为实际翻译逻辑）
+function translateText(text) {
+    // 这里可以调用 Google 或 DeepL 翻译 API
+    return `【翻译】${text}`; // 示例翻译文本
 }
 
 // 外部字幕处理函数
