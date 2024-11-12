@@ -3,7 +3,7 @@
 
     - Hulu 官方双语字幕支持
     - 使用 Google 翻译实现中英文字幕
-    - 固定参数设置，无需使用 Shortcuts
+    - 模拟 Shortcuts 设置，确保脚本在 Surge 环境下正常运行
 
     Author:
         Telegram: Neurogram
@@ -13,26 +13,23 @@
 let url = $request.url;
 let headers = $request.headers;
 
+// 固定设置参数
 let settings = {
-    Hulu: {
-        type: "Google", // 翻译引擎：Google, DeepL, External, Disable
-        lang: "English", // 源语言
-        sl: "auto", // 自动检测源语言
-        tl: "zh", // 目标语言改成中文
-        line: "s", // 显示位置：f 是第一行，s 是第二行
-        dkey: "null", // 如果使用 DeepL，请填写 DeepL API 密钥
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    }
+    type: "Google", // 翻译引擎：Google, DeepL, External, Disable
+    lang: "English", // 源语言
+    sl: "auto", // 自动检测源语言
+    tl: "zh", // 目标语言改成中文
+    line: "s", // 显示位置：f 是第一行，s 是第二行
+    dkey: "null", // 如果使用 DeepL，请填写 DeepL API 密钥
+    s_subtitles_url: "null",
+    t_subtitles_url: "null",
+    subtitles: "null",
+    subtitles_type: "null",
+    subtitles_sl: "null",
+    subtitles_tl: "null",
+    subtitles_line: "null",
+    external_subtitles: "null"
 };
-
-let service = "Hulu";
 
 // Hulu 特殊处理逻辑
 if (url.match(/\.vtt$/)) {
