@@ -122,6 +122,12 @@ if (!body) $done({});
 
 // Hulu 特殊处理逻辑
 if (service === "Hulu" && url.match(/\.vtt$/)) {
+    // 检查并强制解析 Content-Type
+    let contentType = $response.headers['Content-Type'];
+    if (contentType === 'application/octet-stream') {
+        // 强制将其解析为 WebVTT 字幕
+        $response.headers['Content-Type'] = 'text/vtt';
+    }
     body = handleHuluSubtitles(body);
     $done({ body });
 }
