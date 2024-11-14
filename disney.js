@@ -1,6 +1,8 @@
 /*
     Dualsub for Surge
-    - Optimized subtitle handling and translation
+    - Optimized version with improved translation speed
+    - Auto-detection of source language
+    - Better error handling and logging
 */
 
 let url = $request.url
@@ -304,6 +306,7 @@ if (url.match(/\.(web)?vtt/) || service == "Netflix" || service == "General") {
 }
 
 async function machine_subtitles(type) {
+    console.log("[Dualsub] Starting translation");
     try {
         let header = body.match(/^WEBVTT[\s\S]*?(?=\d{2}:\d{2}:)/)?.[0] || 'WEBVTT\n\n';
         let content = body.replace(/^WEBVTT[\s\S]*?(?=\d{2}:\d{2}:)/, '');
@@ -337,26 +340,44 @@ async function machine_subtitles(type) {
             }
         }
         
+        console.log(`[Dualsub] Processing ${translatable_text.length} lines`);
+        
         let translations = [];
-        for (let batch of groupAgain(translatable_text, 50)) {
+        for (let batch of groupAgain(translatable_text, 25)) {
             let options = {
-                url: `https://translate.google.com/translate_a/single?client=it&dt=qca&dt=t&dt=rmt&dt=bd&dt=rms&dt=sos&dt=md&dt=gt&dt=ld&dt=ss&dt=ex&otf=2&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
+                url: `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}`,
                 headers: {
-                    "User-Agent": "GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)"
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Mobile/15E148 Safari/604.1',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Accept': '*/*',
+                    'Connection': 'keep-alive'
                 },
-                body: `q=${encodeURIComponent(batch.join("\n"))}`
+                body: `q=${encodeURIComponent(batch.join("\n"))}`,
+                timeout: 3000
             };
             
-            let trans = await send_request(options, "post");
-            if (trans.sentences) {
-                trans.sentences.forEach(sentence => {
-                    if (sentence.trans) {
-                        translations.push(sentence.trans.replace(/\n$/g, "").replace(/\n/g, " "));
-                    }
-                });
+            try {
+                console.log("[Dualsub] Sending translation request");
+                let trans = await send_request(options, "post");
+                console.log("[Dualsub] Received translation response");
+                
+                if (trans.sentences) {
+                    trans.sentences.forEach(sentence => {
+                        if (sentence.trans) {
+                            translations.push(sentence.trans.replace(/\n$/g, "").replace(/\n/g, " "));
+                        }
+                    });
+                }
+            } catch (err) {
+                console.log(`[Dualsub] Translation batch error: ${err}`);
+                translations.push("...");
+                continue;
             }
+            
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
         
+        console.log("[Dualsub] Building new subtitle file");
         let new_body = header;
         let trans_index = 0;
         
@@ -384,6 +405,7 @@ async function machine_subtitles(type) {
             $persistentStore.write(JSON.stringify(settings));
         }
         
+        console.log("[Dualsub] Translation completed");
         $done({ body: new_body });
         
     } catch (error) {
@@ -405,8 +427,18 @@ function send_request(options, method) {
     return new Promise((resolve, reject) => {
         if (method == "post") {
             $httpClient.post(options, function (error, response, data) {
-                if (error) reject('Error')
-                resolve(JSON.parse(data))
+                if (error) {
+                    console.log(`[Dualsub] Request error: ${error}`);
+                    reject(error);
+                    return;
+                }
+                try {
+                    let parsed = JSON.parse(data);
+                    resolve(parsed);
+                } catch (e) {
+                    console.log(`[Dualsub] Parse error: ${e}`);
+                    reject(e);
+                }
             })
         }
     })
