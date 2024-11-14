@@ -1,8 +1,5 @@
 /*
-    Dualsub for Surge
-    - Optimized version with improved translation speed
-    - Auto-detection of source language
-    - Better error handling and logging
+    Dualsub for Surge by Neurogram
 */
 
 let url = $request.url
@@ -13,7 +10,7 @@ let default_settings = {
         type: "Google",
         lang: "Chinese",
         sl: "auto",
-        tl: "zh-CN",
+        tl: "zh-CN", 
         line: "s",
         dkey: "null",
         s_subtitles_url: "null",
@@ -26,10 +23,10 @@ let default_settings = {
         external_subtitles: "null"
     },
     HBOMax: {
-        type: "Google",
-        lang: "Chinese",
+        type: "Official",
+        lang: "English CC",
         sl: "auto",
-        tl: "zh-CN",
+        tl: "en-US SDH",
         line: "s",
         dkey: "null",
         s_subtitles_url: "null",
@@ -43,7 +40,7 @@ let default_settings = {
     },
     Hulu: {
         type: "Google",
-        lang: "Chinese",
+        lang: "English",
         sl: "auto",
         tl: "zh-CN",
         line: "s",
@@ -59,9 +56,9 @@ let default_settings = {
     },
     Netflix: {
         type: "Google",
-        lang: "Chinese", 
+        lang: "English",
         sl: "auto",
-        tl: "zh-CN",
+        tl: "en",
         line: "s",
         dkey: "null",
         s_subtitles_url: "null",
@@ -75,9 +72,9 @@ let default_settings = {
     },
     Paramount: {
         type: "Google",
-        lang: "Chinese",
+        lang: "English",
         sl: "auto",
-        tl: "zh-CN",
+        tl: "en",
         line: "s",
         dkey: "null",
         s_subtitles_url: "null",
@@ -90,10 +87,10 @@ let default_settings = {
         external_subtitles: "null"
     },
     PrimeVideo: {
-        type: "Google",
-        lang: "Chinese",
+        type: "Official",
+        lang: "English [CC]",
         sl: "auto",
-        tl: "zh-CN",
+        tl: "English [CC]",
         line: "s",
         dkey: "null",
         s_subtitles_url: "null",
@@ -108,9 +105,9 @@ let default_settings = {
     General: {
         service: "null",
         type: "Google",
-        lang: "Chinese",
+        lang: "English",
         sl: "auto",
-        tl: "zh-CN",
+        tl: "en",
         line: "s",
         dkey: "null",
         s_subtitles_url: "null",
@@ -124,15 +121,17 @@ let default_settings = {
     },
     YouTube: {
         type: "Enable",
-        lang: "Chinese",
+        lang: "English",
         sl: "auto",
-        tl: "zh-CN",
+        tl: "en",
         line: "sl"
     }
 }
 
 let settings = $persistentStore.read()
+
 if (!settings) settings = default_settings
+
 if (typeof (settings) == "string") settings = JSON.parse(settings)
 
 let service = ""
@@ -155,7 +154,6 @@ if (settings.General) {
         }
     }
 }
-
 if (!service) $done({})
 
 if (!settings[service]) settings[service] = default_settings[service]
@@ -193,6 +191,7 @@ if (url.match(/action=set/)) {
     delete settings[service].external_subtitles
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } })
 }
+
 if (setting.type == "Disable") $done({})
 
 if (setting.type != "Official" && url.match(/\.m3u8/)) $done({})
@@ -203,26 +202,26 @@ if (!body) $done({})
 
 if (service == "YouTube") {
     let patt = new RegExp(`lang=${setting.tl}`)
-    
+
     if (url.replace(/&lang=zh(-Hans)*&/, "&lang=zh-CN&").replace(/&lang=zh-Hant&/, "&lang=zh-TW&").match(patt) || url.match(/&tlang=/)) $done({})
-    
+
     let t_url = `${url}&tlang=${setting.tl == "zh-CN" ? "zh-Hans" : setting.tl == "zh-TW" ? "zh-Hant" : setting.tl}`
-    
+
     let options = {
         url: t_url,
         headers: headers
     }
-    
+
     $httpClient.get(options, function (error, response, data) {
         if (setting.line == "sl") $done({ body: data })
         let timeline = body.match(/<p t="\d+" d="\d+">/g)
-        
+
         if (url.match(/&kind=asr/)) {
             body = body.replace(/<\/?s[^>]*>/g, "")
             data = data.replace(/<\/?s[^>]*>/g, "")
             timeline = body.match(/<p t="\d+" d="\d+"[^>]+>/g)
         }
-        
+
         for (var i in timeline) {
             let patt = new RegExp(`${timeline[i]}([^<]+)<\\/p>`)
             if (body.match(patt) && data.match(patt)) {
@@ -230,7 +229,7 @@ if (service == "YouTube") {
                 if (setting.line == "f") body = body.replace(patt, `${timeline[i]}${data.match(patt)[1]}\n$1</p>`)
             }
         }
-        
+
         $done({ body })
     })
 }
@@ -240,178 +239,68 @@ let subtitles_urls_data = setting.t_subtitles_url
 if (setting.type == "Official" && url.match(/\.m3u8/)) {
     settings[service].t_subtitles_url = "null"
     $persistentStore.write(JSON.stringify(settings))
-    
+
     let patt = new RegExp(`TYPE=SUBTITLES.+NAME="${setting.tl.replace(/(\[|\]|\(|\))/g, "\\$1")}.+URI="([^"]+)`)
-    
+
     if (body.match(patt)) {
         let host = ""
         if (service == "Disney") host = url.match(/https.+media.(dss|star)ott.com\/ps01\/disney\/[^\/]+\//)[0]
-        
+
         let subtitles_data_link = `${host}${body.match(patt)[1]}`
-        
+
         if (service == "PrimeVideo") {
             correct_host = subtitles_data_link.match(/https:\/\/(.+(cloudfront|akamaihd|avi-cdn).net)/)[1]
             headers.Host = correct_host
         }
-        
+
         let options = {
             url: subtitles_data_link,
             headers: headers
         }
-        
+
         $httpClient.get(options, function (error, response, data) {
             let subtitles_data = ""
             if (service == "Disney") subtitles_data = data.match(/.+-MAIN.+\.vtt/g)
             if (service == "HBOMax") subtitles_data = data.match(/http.+\.vtt/g)
             if (service == "PrimeVideo") subtitles_data = data.match(/.+\.vtt/g)
-            
+
             if (service == "Disney") host = host + "r/"
             if (service == "PrimeVideo") host = subtitles_data_link.match(/https.+\//)[0]
-            
+
             if (subtitles_data) {
                 subtitles_data = subtitles_data.join("\n")
                 if (service == "Disney" || service == "PrimeVideo") subtitles_data = subtitles_data.replace(/(.+)/g, `${host}$1`)
                 settings[service].t_subtitles_url = subtitles_data
                 $persistentStore.write(JSON.stringify(settings))
             }
-            
+
             if (service == "Disney" && subtitles_data_link.match(/.+-MAIN.+/) && data.match(/,\nseg.+\.vtt/g)) {
                 subtitles_data = data.match(/,\nseg.+\.vtt/g)
                 let url_path = subtitles_data_link.match(/\/r\/(.+)/)[1].replace(/\w+\.m3u8/, "")
                 settings[service].t_subtitles_url = subtitles_data.join("\n").replace(/,\n/g, host + url_path)
                 $persistentStore.write(JSON.stringify(settings))
             }
-            
+
             $done({})
         })
     }
-    
+
     if (!body.match(patt)) $done({})
 }
-
 if (url.match(/\.(web)?vtt/) || service == "Netflix" || service == "General") {
     if (service != "Netflix" && url == setting.s_subtitles_url && setting.subtitles != "null" && setting.subtitles_type == setting.type && setting.subtitles_sl == setting.sl && setting.subtitles_tl == setting.tl && setting.subtitles_line == setting.line) $done({ body: setting.subtitles })
-    
+
     if (setting.type == "Official") {
         if (subtitles_urls_data == "null") $done({})
         subtitles_urls_data = subtitles_urls_data.match(/.+\.vtt/g)
         if (subtitles_urls_data) official_subtitles(subtitles_urls_data)
     }
-    
-    if (setting.type == "Google") machine_subtitles("Google")
-    
-    if (setting.type == "DeepL") machine_subtitles("DeepL")
-    
-    if (setting.type == "External") external_subtitles()
-}
 
-async function machine_subtitles(type) {
-    console.log("[Dualsub] Starting translation");
-    try {
-        let header = body.match(/^WEBVTT[\s\S]*?(?=\d{2}:\d{2}:)/)?.[0] || 'WEBVTT\n\n';
-        let content = body.replace(/^WEBVTT[\s\S]*?(?=\d{2}:\d{2}:)/, '');
-        let subtitles = content.split('\n\n').filter(block => block.trim());
-        
-        let translatable_text = [];
-        let subtitle_data = [];
-        
-        for (let block of subtitles) {
-            let lines = block.split('\n');
-            let timecode_index = lines.findIndex(line => line.match(/^\d{2}:\d{2}:/));
-            
-            if (timecode_index === -1) continue;
-            
-            let timing = lines[timecode_index];
-            let text_lines = lines.slice(timecode_index + 1);
-            let text = text_lines.join(' ')
-                .replace(/<\/?[^>]+(>|$)/g, '')
-                .replace(/^[A-Z]+:/, '')
-                .trim();
-            
-            subtitle_data.push({
-                timing: timing,
-                format: lines.slice(0, timecode_index),
-                original: text_lines,
-                text: text
-            });
-            
-            if (text && !text.match(/^\[.*\]$/)) {
-                translatable_text.push(text);
-            }
-        }
-        
-        console.log(`[Dualsub] Processing ${translatable_text.length} lines`);
-        
-        let translations = [];
-        for (let batch of groupAgain(translatable_text, 25)) {
-            let options = {
-                url: `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}`,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Mobile/15E148 Safari/604.1',
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Accept': '*/*',
-                    'Connection': 'keep-alive'
-                },
-                body: `q=${encodeURIComponent(batch.join("\n"))}`,
-                timeout: 3000
-            };
-            
-            try {
-                console.log("[Dualsub] Sending translation request");
-                let trans = await send_request(options, "post");
-                console.log("[Dualsub] Received translation response");
-                
-                if (trans.sentences) {
-                    trans.sentences.forEach(sentence => {
-                        if (sentence.trans) {
-                            translations.push(sentence.trans.replace(/\n$/g, "").replace(/\n/g, " "));
-                        }
-                    });
-                }
-            } catch (err) {
-                console.log(`[Dualsub] Translation batch error: ${err}`);
-                translations.push("...");
-                continue;
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        
-        console.log("[Dualsub] Building new subtitle file");
-        let new_body = header;
-        let trans_index = 0;
-        
-        subtitle_data.forEach(item => {
-            new_body += item.format.join('\n') + 
-                       (item.format.length ? '\n' : '') + 
-                       item.timing + '\n';
-            
-            new_body += item.original.join('\n');
-            
-            if (item.text && !item.text.match(/^\[.*\]$/) && translations[trans_index]) {
-                new_body += '\n' + translations[trans_index++];
-            }
-            
-            new_body += '\n\n';
-        });
-        
-        if (service != "Netflix") {
-            settings[service].s_subtitles_url = url;
-            settings[service].subtitles = new_body;
-            settings[service].subtitles_type = setting.type;
-            settings[service].subtitles_sl = setting.sl;
-            settings[service].subtitles_tl = setting.tl;
-            settings[service].subtitles_line = setting.line;
-            $persistentStore.write(JSON.stringify(settings));
-        }
-        
-        console.log("[Dualsub] Translation completed");
-        $done({ body: new_body });
-        
-    } catch (error) {
-        console.log(`[Dualsub] Error: ${error}`);
-        $done({});
-    }
+    if (setting.type == "Google") machine_subtitles("Google")
+
+    if (setting.type == "DeepL") machine_subtitles("DeepL")
+
+    if (setting.type == "External") external_subtitles()
 }
 
 function external_subtitles() {
@@ -423,29 +312,168 @@ function external_subtitles() {
     $done({ body })
 }
 
+async function machine_subtitles(type) {
+    body = body.replace(/\r/g, "")
+    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+
+    let dialogue = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+/g)
+
+    if (!dialogue) $done({})
+
+    let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g)
+
+    let s_sentences = []
+    for (var i in dialogue) {
+        s_sentences.push(`${type == "Google" ? "~" + i + "~" : "&text="}${dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "")}`)
+    }
+    s_sentences = groupAgain(s_sentences, type == "Google" ? 80 : 50)
+
+    let t_sentences = []
+    let trans_result = []
+
+    if (type == "Google") {
+        for (var p in s_sentences) {
+            let options = {
+                url: `https://translate.google.com/translate_a/single?client=it&dt=qca&dt=t&dt=rmt&dt=bd&dt=rms&dt=sos&dt=md&dt=gt&dt=ld&dt=ss&dt=ex&otf=2&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
+                headers: {
+                    "User-Agent": "GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)"
+                },
+                body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
+            }
+
+            let trans = await send_request(options, "post")
+
+            if (trans.sentences) {
+                let sentences = trans.sentences
+                for (var k in sentences) {
+                    if (sentences[k].trans) trans_result.push(sentences[k].trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"))
+                }
+            }
+        }
+
+        if (trans_result.length > 0) {
+            t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g)
+        }
+    }
+
+    if (type == "DeepL") {
+        for (var l in s_sentences) {
+            let options = {
+                url: "https://api-free.deepl.com/v2/translate",
+                body: `auth_key=${setting.dkey}${setting.sl == "auto" ? "" : `&source_lang=${setting.sl}`}&target_lang=${setting.tl}${s_sentences[l].join("")}`
+            }
+
+            let trans = await send_request(options, "post")
+
+            if (trans.translations) trans_result.push(trans.translations)
+        }
+
+        if (trans_result.length > 0) {
+            for (var o in trans_result) {
+                for (var u in trans_result[o]) {
+                    t_sentences.push(trans_result[o][u].text.replace(/\n/g, " "))
+                }
+            }
+        }
+    }
+
+    if (t_sentences.length > 0) {
+        let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n")
+
+        for (var j in dialogue) {
+            let patt = new RegExp(`(${timeline[j]})`)
+            if (setting.line == "s") patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`)
+
+            let patt2 = new RegExp(`~${j}~\\s*(.+)`)
+
+            if (g_t_sentences.match(patt2) && type == "Google") body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`)
+
+            if (type == "DeepL") body = body.replace(patt, `$1\n${t_sentences[j]}`)
+        }
+
+        if (service != "Netflix") {
+            settings[service].s_subtitles_url = url
+            settings[service].subtitles = body
+            settings[service].subtitles_type = setting.type
+            settings[service].subtitles_sl = setting.sl
+            settings[service].subtitles_tl = setting.tl
+            settings[service].subtitles_line = setting.line
+            $persistentStore.write(JSON.stringify(settings))
+        }
+    }
+
+    $done({ body })
+}
+
+async function official_subtitles(subtitles_urls_data) {
+    let result = []
+
+    if (service == "Disney" || service == "HBOMax") {
+        let subtitles_index = parseInt(url.match(/(\d+)\.vtt/)[1])
+        let start = subtitles_index - 3 < 0 ? 0 : subtitles_index - 3
+        subtitles_urls_data = subtitles_urls_data.slice(start, subtitles_index + 4)
+    }
+
+    for (var k in subtitles_urls_data) {
+        let options = {
+            url: subtitles_urls_data[k],
+            headers: headers
+        }
+        result.push(await send_request(options, "get"))
+    }
+
+    body = body.replace(/\r/g, "")
+    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+
+    let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g)
+
+    for (var i in timeline) {
+        let patt1 = new RegExp(`(${timeline[i]})`)
+        if (setting.line == "s") patt1 = new RegExp(`(${timeline[i]}(\\n.+)+)`)
+
+        let time = timeline[i].match(/^\d+:\d\d:\d\d/)[0]
+        let patt2 = new RegExp(`${time}.\\d\\d\\d --> \\d+:\\d\\d:\\d\\d.\\d.+(\\n.+)+`)
+        let dialogue = result.join("\n\n").match(patt2)
+
+        if (dialogue) body = body.replace(
+            patt1,
+            `$1\n${dialogue[0].replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "").replace(/\n/, " ")}`
+        )
+    }
+
+    settings[service].s_subtitles_url = url
+    settings[service].subtitles = body
+    settings[service].subtitles_type = setting.type
+    settings[service].subtitles_sl = setting.sl
+    settings[service].subtitles_tl = setting.tl
+    settings[service].subtitles_line = setting.line
+    $persistentStore.write(JSON.stringify(settings))
+
+    $done({ body })
+}
+
 function send_request(options, method) {
     return new Promise((resolve, reject) => {
+        if (method == "get") {
+            $httpClient.get(options, function (error, response, data) {
+                if (error) return reject('Error')
+                resolve(data)
+            })
+        }
+
         if (method == "post") {
             $httpClient.post(options, function (error, response, data) {
-                if (error) {
-                    console.log(`[Dualsub] Request error: ${error}`);
-                    reject(error);
-                    return;
-                }
-                try {
-                    let parsed = JSON.parse(data);
-                    resolve(parsed);
-                } catch (e) {
-                    console.log(`[Dualsub] Parse error: ${e}`);
-                    reject(e);
-                }
+                if (error) return reject('Error')
+                resolve(JSON.parse(data))
             })
         }
     })
 }
 
 function groupAgain(data, num) {
-    let result = []
+    var result = []
     for (var i = 0; i < data.length; i += num) {
         result.push(data.slice(i, i + num))
     }
