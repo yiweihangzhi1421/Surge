@@ -1,7 +1,6 @@
 // Peacock双语字幕脚本 for Surge
-// 作者: @ChatGPT
-// 功能: 为Peacock视频添加双语字幕功能
-// 使用: 添加MitM hostname: *.cdn.peacocktv.com
+// 更新: 2024.03.21
+// 功能: 为Peacock视频添加双语字幕
 
 console.log('[Peacock] Script started');
 
@@ -16,7 +15,8 @@ let settings = {
     secondaryLang: "en",    // 次要语言(英文)
     linePosition: "s",      // s: 第二行, f: 第一行
     translateType: "Google", // 翻译类型: Google, Disable
-    timeout: 60000          // 超时时间: 60秒
+    timeout: 120000,        // 超时时间: 120秒
+    retryCount: 3           // 重试次数
 };
 
 // 从持久化存储加载配置
@@ -29,35 +29,82 @@ function loadSettings() {
             console.log('[Peacock] Settings loaded successfully');
         } catch (error) {
             console.log('[Peacock] Load settings failed, using default settings:', error);
+            $notification.post('Peacock双语字幕', '加载配置失败', '使用默认配置');
         }
     }
 }
 
-// 保存配置到持久化存储
+// 保存配置
 function saveSettings() {
-    console.log('[Peacock] Saving settings');
-    $persistentStore.write(JSON.stringify(settings), 'peacockDualsubSettings');
+    try {
+        $persistentStore.write(JSON.stringify(settings), 'peacockDualsubSettings');
+        console.log('[Peacock] Settings saved successfully');
+    } catch (error) {
+        console.log('[Peacock] Save settings failed:', error);
+        $notification.post('Peacock双语字幕', '保存配置失败', error.message);
+    }
 }
 
-// 网络请求封装
+// 网络请求处理
 async function makeRequest(options) {
     return new Promise((resolve, reject) => {
         const timeoutId = setTimeout(() => {
             reject(new Error('Request timeout'));
         }, settings.timeout);
 
-        $httpClient.get(options, (error, response, data) => {
-            clearTimeout(timeoutId);
-            if (error) {
-                reject(error);
-            } else {
-                resolve(data);
+        $httpClient.get({
+            ...options,
+            headers: {
+                ...options.headers,
+                'Accept': 'application/octet-stream',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15'
             }
+        }, (error, response, data) => {
+            clearTimeout(timeoutId);
+            
+            if (error) {
+                console.log('[Peacock] Request failed:', error);
+                reject(error);
+                return;
+            }
+
+            // 检查响应状态
+            if (response.status !== 200) {
+                reject(new Error(`HTTP Error: ${response.status}`));
+                return;
+            }
+
+            // 检查内容类型
+            const contentType = response.headers['Content-Type'];
+            if (contentType && !contentType.includes('application/octet-stream') && !contentType.includes('text/')) {
+                console.log('[Peacock] Unexpected content type:', contentType);
+            }
+
+            resolve(data);
         });
     });
 }
 
-// 字幕处理主函数
+// 带重试的请求
+async function makeRequestWithRetry(options) {
+    let lastError;
+    for (let i = 0; i < settings.retryCount; i++) {
+        try {
+            console.log(`[Peacock] Request attempt ${i + 1}`);
+            return await makeRequest(options);
+        } catch (error) {
+            lastError = error;
+            console.log(`[Peacock] Request failed, attempt ${i + 1}:`, error);
+            await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        }
+    }
+    throw lastError;
+}
+
+// 字幕处理
 async function processSubtitles(body) {
     console.log('[Peacock] Processing subtitles');
     if (!settings.enabled || !body) return body;
@@ -123,7 +170,7 @@ async function processSubtitles(body) {
     return processedSubtitles.join('\n\n');
 }
 
-// Google翻译API
+// Google翻译
 async function translateText(text) {
     if (settings.translateType !== "Google") return text;
     
@@ -135,95 +182,79 @@ async function translateText(text) {
         }
     };
 
-    return new Promise((resolve, reject) => {
-        $httpClient.get(options, function(error, response, data) {
-            if (error) {
-                reject(error);
-                return;
-            }
-            
-            try {
-                let translated = JSON.parse(data);
-                let translatedText = '';
-                
-                // 合并所有翻译片段
-                if (translated[0]) {
-                    translatedText = translated[0]
-                        .map(item => item[0])
-                        .join('')
-                        .trim();
-                }
-                
-                resolve(translatedText || text);
-            } catch (parseError) {
-                reject(parseError);
-            }
-        });
-    });
-}
-
-// 处理字幕样式
-function preserveStyle(originalText, translatedText) {
-    let styleMatch = originalText.match(/<[^>]+>/g);
-    if (styleMatch) {
-        for (let style of styleMatch) {
-            if (!translatedText.includes(style)) {
-                translatedText = style + translatedText + style.replace('<', '</');
-            }
+    try {
+        const data = await makeRequestWithRetry(options);
+        let translated = JSON.parse(data);
+        if (translated[0]) {
+            return translated[0]
+                .map(item => item[0])
+                .join('')
+                .trim() || text;
         }
+    } catch (error) {
+        console.log('[Peacock] Translation error:', error);
+        throw error;
     }
-    return translatedText;
+
+    return text;
 }
 
 // 主函数
 async function main() {
     try {
-        console.log('[Peacock] Main function started');
+        console.log('[Peacock] Processing URL:', url);
+        
+        // 检查响应头
+        if ($response.headers) {
+            console.log('[Peacock] Response headers:', JSON.stringify($response.headers));
+        }
+
+        // 检查是否是字幕文件
+        if (!url.match(/\.(vtt|srt|webvtt)$/i)) {
+            console.log('[Peacock] Not a subtitle file, passing through');
+            $done({});
+            return;
+        }
+
+        // 检查body
+        if (!body) {
+            console.log('[Peacock] No body found');
+            $done({});
+            return;
+        }
+
         loadSettings();
         
-        // 处理配置获取请求
-        if (url.match(/action=get/)) {
-            console.log('[Peacock] Handling get settings request');
-            $done({ 
-                response: { 
-                    body: JSON.stringify(settings),
-                    headers: { 'Content-Type': 'application/json' }
-                }
-            });
+        if (!settings.enabled) {
+            console.log('[Peacock] Script disabled');
+            $done({});
             return;
         }
+
+        // 处理字幕
+        const processedBody = await processSubtitles(body);
         
-        // 处理配置更新请求
-        if (url.match(/action=set/)) {
-            console.log('[Peacock] Handling set settings request');
-            let newSettings = JSON.parse($request.body);
-            settings = { ...settings, ...newSettings };
-            saveSettings();
-            $done({ 
-                response: { 
-                    body: JSON.stringify(settings),
-                    headers: { 'Content-Type': 'application/json' }
-                }
-            });
+        if (!processedBody) {
+            console.log('[Peacock] No processed body');
+            $done({});
             return;
         }
-        
-        // 处理字幕文件
-        if (url.match(/\.(vtt|srt)$/)) {
-            console.log('[Peacock] Processing subtitle file');
-            let processedBody = await processSubtitles(body);
-            console.log('[Peacock] Subtitle processing completed');
-            $done({ body: processedBody });
-            return;
-        }
-        
-        // 其他请求直接放行
-        console.log('[Peacock] Passing through other requests');
-        $done({});
+
+        // 设置响应
+        console.log('[Peacock] Processing completed');
+        $done({
+            body: processedBody,
+            headers: {
+                ...$response.headers,
+                'Content-Length': processedBody.length.toString(),
+                'Content-Type': 'application/octet-stream',
+                'Cache-Control': 'no-cache'
+            }
+        });
         
     } catch (error) {
-        console.log('[Peacock] Main function error:', error);
-        $notification.post('Peacock双语字幕', '处理失败', error.message);
+        console.log('[Peacock] Error in main:', error);
+        $notification.post('Peacock字幕处理', '处理失败', error.message);
         $done({});
     }
 }
