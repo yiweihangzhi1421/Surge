@@ -1,17 +1,30 @@
+// 默认设置
 let settings = {
     Tubi: {
         type: "Google", // 翻译服务: Google, DeepL, 或 Disable
         targetLanguage: "zh-CN", // 目标语言 (中文)
-        lineMerge: "dual", // 双语显示: dual, single, 或 original
+        lineMerge: "dual", // 双语显示: dual (双语), single (仅翻译), original (仅原始字幕)
     }
 };
 
-let service = "Tubi"; // 当前服务名称
+let service = "Tubi"; // 当前服务
 let url = $request.url;
 
-// 检查是否为 `.vtt` 字幕文件请求
+// 处理 `.m3u8` 文件
+if (url.match(/\.m3u8$/)) {
+    $httpClient.get(url, function (error, response, body) {
+        if (error) {
+            console.log("m3u8 文件请求错误: ", error);
+            $done({});
+            return;
+        }
+        // 保留 `.m3u8` 原始内容，不做修改
+        $done({ body });
+    });
+}
+
+// 处理 `.vtt` 文件
 if (url.match(/\.vtt$/)) {
-    // 获取字幕文件内容
     $httpClient.get(url, function (error, response, body) {
         if (error) {
             console.log("字幕文件请求错误: ", error);
@@ -19,7 +32,7 @@ if (url.match(/\.vtt$/)) {
             return;
         }
 
-        // 翻译字幕内容
+        // 检查是否需要翻译
         if (settings[service].type === "Google") {
             translateSubtitles(body, settings[service].targetLanguage, function (translatedSubtitles) {
                 // 合并原始字幕和翻译后的字幕
