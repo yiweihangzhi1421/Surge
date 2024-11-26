@@ -1,249 +1,185 @@
-// 基础配置
-const CONFIG = {
-    DEFAULT_SETTINGS: {
-        Tubi: {
-            type: "Google",    
-            lang: "zh-CN",     
-            sl: "auto",        
-            tl: "zh-CN",       
-            line: "s",         
-            dkey: "",          
-            timeout: 1500      // 1.5秒超时
-        }
-    },
-    REGEX: {
-        M3U8: /\.m3u8/,
-        VTT: /\.vtt/,
-        TIMELINE: /^\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}\.\d{3}/,
-        VTT_PATTERN: /#EXTINF:.+\n([^\n]+\.vtt)/,
-        MUSIC: /^\([^)]+\)$/,
-        SPECIAL: /^♪.*♪$/
+let url = $request.url;
+
+// Surge 持久化存储函数
+function saveSetting(key, value) {
+    return $persistentStore.write(value, key);
+}
+
+function loadSetting(key) {
+    return $persistentStore.read(key) || null;
+}
+
+// 默认设置
+let default_settings = {
+    Tubi: {
+        type: "Google", // 翻译引擎：Google, DeepL, External, Disable
+        lang: "English",
+        sl: "auto", // 源语言
+        tl: "zh-CN", // 目标语言
+        line: "s", // "f" 翻译在上，"s" 原文在上
+        dkey: "null" // DeepL API 密钥
     }
 };
 
-// VTT处理类
-class VTTHandler {
-    static async process(body, setting) {
-        try {
-            // 处理二进制数据
-            const text = body instanceof Uint8Array ? 
-                new TextDecoder('utf-8').decode(body) : body;
-
-            // 快速分割处理
-            const lines = text.split('\n');
-            const processedLines = [];
-            let isHeader = true;
-            let currentTimeline = null;
-            let currentText = [];
-            let batchPromises = [];
-
-            // 处理每一行
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i].trim();
-
-                // 处理头部
-                if (isHeader) {
-                    if (line === 'WEBVTT') {
-                        processedLines.push('WEBVTT', '');
-                        isHeader = false;
-                    }
-                    continue;
-                }
-
-                // 检查时间轴
-                if (CONFIG.REGEX.TIMELINE.test(line)) {
-                    // 处理前一个字幕块
-                    if (currentTimeline && currentText.length > 0) {
-                        batchPromises.push(this._processSubtitleBlock(
-                            currentTimeline, 
-                            currentText,
-                            setting
-                        ));
-                    }
-
-                    // 开始新的字幕块
-                    currentTimeline = line;
-                    currentText = [];
-                    continue;
-                }
-
-                // 收集文本内容
-                if (line && currentTimeline) {
-                    currentText.push(line);
-                }
-
-                // 处理批次翻译
-                if (batchPromises.length >= 5 || i === lines.length - 1) {
-                    const results = await Promise.all(batchPromises);
-                    processedLines.push(...results.flat());
-                    batchPromises = [];
-                }
-            }
-
-            // 处理最后一个字幕块
-            if (currentTimeline && currentText.length > 0) {
-                batchPromises.push(this._processSubtitleBlock(
-                    currentTimeline, 
-                    currentText,
-                    setting
-                ));
-            }
-
-            // 处理剩余的翻译请求
-            if (batchPromises.length > 0) {
-                const results = await Promise.all(batchPromises);
-                processedLines.push(...results.flat());
-            }
-
-            return processedLines.join('\n');
-        } catch (error) {
-            console.error('VTT处理失败:', error);
-            return body;
-        }
-    }
-
-    static async _processSubtitleBlock(timeline, textLines, setting) {
-        const result = [timeline];
-
-        for (const line of textLines) {
-            // 跳过空行
-            if (!line) continue;
-
-            // 保持音乐标记和特殊行不变
-            if (CONFIG.REGEX.MUSIC.test(line) || 
-                CONFIG.REGEX.SPECIAL.test(line)) {
-                result.push(line);
-                continue;
-            }
-
-            // 添加原文
-            if (setting.line === 's') {
-                result.push(line);
-            }
-
-            // 翻译文本
-            try {
-                const translation = await this._translateText(line);
-                if (translation && translation !== line) {
-                    result.push(translation);
-                }
-            } catch (error) {
-                console.error('翻译失败:', error);
-            }
-
-            // 如果翻译在上，添加原文
-            if (setting.line !== 's') {
-                result.push(line);
-            }
-        }
-
-        result.push(''); // 添加空行分隔
-        return result;
-    }
-
-    static async _translateText(text) {
-        return new Promise((resolve, reject) => {
-            const timeoutId = setTimeout(
-                () => reject(new Error('翻译超时')), 
-                CONFIG.DEFAULT_SETTINGS.Tubi.timeout
-            );
-
-            $task.fetch({
-                url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`,
-                method: "GET",
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            }).then(
-                response => {
-                    clearTimeout(timeoutId);
-                    try {
-                        const result = JSON.parse(response.body);
-                        resolve(result[0]?.[0]?.[0] || '');
-                    } catch {
-                        reject(new Error('解析失败'));
-                    }
-                },
-                error => {
-                    clearTimeout(timeoutId);
-                    reject(error);
-                }
-            );
-        });
-    }
+// 加载设置
+let settings = loadSetting("settings");
+if (!settings) {
+    settings = default_settings;
+    saveSetting("settings", JSON.stringify(settings));
+} else {
+    settings = JSON.parse(settings);
 }
 
-// 文件处理函数
-async function handleVTTFile(setting) {
-    try {
-        if (setting.type === "Disable") {
-            $done({});
-            return;
-        }
+let service = "Tubi";
+if (!settings[service]) settings[service] = default_settings[service];
+let setting = settings[service];
 
-        const result = await VTTHandler.process($response.body, setting);
-        
-        // 保持原有的 headers
-        $done({ 
-            body: result,
-            headers: $response.headers
-        });
-    } catch (error) {
-        console.error("VTT处理失败:", error);
-        $done({
-            body: $response.body,
-            headers: $response.headers
-        });
+// 处理 .m3u8 文件
+if (url.match(/\.m3u8/)) {
+    console.log("Processing .m3u8 file...");
+    
+    let body = $response.body; // 获取 HTTP 响应的 body
+    console.log("Original .m3u8 Content:\n", body);
+
+    // 匹配 .vtt 文件的 URL
+    let patt = /#EXTINF:.+\n([^\n]+\.vtt)/; // 匹配 .vtt 文件路径
+    let match = body.match(patt);
+
+    if (match && match[1]) {
+        let subtitles_url = url.replace(/\/[^\/]+$/, `/${match[1]}`); // 拼接完整路径
+        console.log("Extracted subtitles URL:", subtitles_url);
+        settings[service].t_subtitles_url = subtitles_url;
+        saveSetting("settings", JSON.stringify(settings));
+    } else {
+        console.error("Failed to extract subtitles URL from .m3u8 file.");
     }
+
+    $done({ body });
 }
 
-async function handleM3U8File(url, settings, service) {
-    try {
-        const body = $response.body;
-        const match = body.match(CONFIG.REGEX.VTT_PATTERN);
-        
-        if (match?.[1]) {
-            const subtitlesUrl = url.replace(/\/[^\/]+$/, `/${match[1]}`);
-            settings[service].t_subtitles_url = subtitlesUrl;
-            $persistentStore.write(JSON.stringify(settings), "settings");
-        }
+// 处理 .vtt 文件
+if (url.match(/\.vtt/)) {
+    console.log("Processing .vtt file...");
 
-        $done({ body });
-    } catch (error) {
-        console.error("M3U8处理失败:", error);
+    if (setting.type === "Disable") {
+        console.log("Translation disabled, returning original subtitles.");
         $done({ body: $response.body });
     }
-}
 
-// 主函数
-async function main() {
-    try {
-        const url = $request.url;
-        let settings = {};
-        
-        try {
-            settings = JSON.parse($persistentStore.read("settings") || "{}");
-        } catch {
-            settings = CONFIG.DEFAULT_SETTINGS;
-        }
+    let body = $response.body; // 获取 HTTP 响应的 body
+    console.log("Original .vtt Content:\n", body);
 
-        const service = "Tubi";
-        if (!settings[service]) {
-            settings[service] = CONFIG.DEFAULT_SETTINGS[service];
-        }
-        
-        if (CONFIG.REGEX.M3U8.test(url)) {
-            await handleM3U8File(url, settings, service);
-        } else if (CONFIG.REGEX.VTT.test(url)) {
-            await handleVTTFile(settings[service]);
-        } else {
-            $done({});
-        }
-    } catch (error) {
-        console.error("执行失败:", error);
-        $done({});
+    if (!body || body.trim() === "") {
+        console.error("The .vtt file content is empty. Returning original response.");
+        $done({ body });
     }
+
+    // 解析 WebVTT 文件
+    let lines = body.split("\n");
+    let timelineRegex = /\d{2}:\d{2}.\d{3} --> \d{2}:\d{2}.\d{3}/;
+    let timeline = [];
+    let subtitles = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        if (timelineRegex.test(lines[i])) {
+            timeline.push(lines[i]); // 保存时间轴
+            subtitles.push(lines[i + 1]?.trim() || ""); // 保存字幕文本
+            i++; // 跳过字幕文本行
+        }
+    }
+
+    console.log("Parsed timeline:", timeline);
+    console.log("Parsed subtitles:", subtitles);
+
+    // 如果没有解析到内容，直接返回原始内容
+    if (timeline.length === 0 || subtitles.length === 0) {
+        console.error("Failed to parse .vtt file. Returning original content.");
+        $done({ body });
+    }
+
+    // 调用翻译服务
+    translateSubtitles(subtitles, setting.type, setting.sl, setting.tl).then(translated => {
+        console.log("Translated subtitles:", translated);
+
+        // 重建 WebVTT 文件
+        let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
+        console.log("Generated WEBVTT Content:\n", translatedBody);
+
+        $done({ body: translatedBody });
+    }).catch(err => {
+        console.error("Translation failed:", err);
+        $done({ body });
+    });
 }
 
-// 启动脚本
-main();
+// 重建 WebVTT 文件
+function rebuildVTT(timeline, original, translated, line) {
+    let result = "WEBVTT\n\n";
+    for (let i = 0; i < timeline.length; i++) {
+        result += `${timeline[i]}\n`;
+        if (line === "s") {
+            result += `${original[i]}\n${translated[i]}\n\n`; // 原文在上，翻译在下
+        } else if (line === "f") {
+            result += `${translated[i]}\n${original[i]}\n\n`; // 翻译在上，原文在下
+        }
+    }
+    return result;
+}
+
+// 翻译字幕文本
+async function translateSubtitles(subtitles, engine, sl, tl) {
+    let translated = [];
+    if (engine === "Google") {
+        for (let i = 0; i < subtitles.length; i++) {
+            if (subtitles[i].trim() === "") {
+                translated.push(""); // 跳过空白字幕
+                continue;
+            }
+            let options = {
+                url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(subtitles[i])}`,
+                method: "GET"
+            };
+            try {
+                let response = await send_request(options);
+                translated.push(response[0]?.[0]?.[0] || subtitles[i]);
+            } catch (e) {
+                console.error("Translation error:", e);
+                translated.push(subtitles[i]);
+            }
+        }
+    } else if (engine === "DeepL") {
+        for (let i = 0; i < subtitles.length; i++) {
+            if (subtitles[i].trim() === "") {
+                translated.push(""); // 跳过空白字幕
+                continue;
+            }
+            let options = {
+                url: "https://api-free.deepl.com/v2/translate",
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `auth_key=${setting.dkey}&text=${encodeURIComponent(subtitles[i])}&target_lang=${tl}`
+            };
+            try {
+                let response = await send_request(options);
+                translated.push(response.translations?.[0]?.text || subtitles[i]);
+            } catch (e) {
+                console.error("Translation error:", e);
+                translated.push(subtitles[i]);
+            }
+        }
+    }
+    return translated;
+}
+
+// HTTP 请求封装
+function send_request(options) {
+    return new Promise((resolve, reject) => {
+        $task.fetch(options).then(response => {
+            try {
+                resolve(JSON.parse(response.body));
+            } catch (e) {
+                reject(e);
+            }
+        }, reason => reject(reason));
+    });
+}
