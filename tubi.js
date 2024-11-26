@@ -1,5 +1,4 @@
 let url = $request.url;
-let headers = $request.headers;
 
 // 默认设置
 let default_settings = {
@@ -45,7 +44,12 @@ if (url.match(/\.m3u8/)) {
 
 // 处理 .vtt 文件
 if (url.match(/\.vtt/)) {
-    if (setting.type === "Disable") $done({ body }); // 用户禁用翻译，直接返回原始字幕
+    console.log("Processing .vtt file:", url);
+
+    if (setting.type === "Disable") {
+        console.log("Translation disabled, returning original subtitles.");
+        $done({ body });
+    }
 
     // 解析 WebVTT 文件
     let lines = body.split("\n");
@@ -56,19 +60,26 @@ if (url.match(/\.vtt/)) {
     for (let i = 0; i < lines.length; i++) {
         if (timelineRegex.test(lines[i])) {
             timeline.push(lines[i]); // 保存时间轴
-            subtitles.push(lines[i + 1] || ""); // 保存对应字幕文本，处理空行
+            subtitles.push(lines[i + 1] || ""); // 保存字幕文本
             i++; // 跳过字幕文本行
         }
     }
 
+    console.log("Parsed timeline:", timeline);
+    console.log("Parsed subtitles:", subtitles);
+
     // 调用翻译服务
     translateSubtitles(subtitles, setting.type, setting.sl, setting.tl).then(translated => {
+        console.log("Translated subtitles:", translated);
+
         // 重建 WebVTT 文件
         let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
+        console.log("Final subtitle body:", translatedBody);
+
         $done({ body: translatedBody });
     }).catch(err => {
-        console.log("Translation failed:", err);
-        $done({ body }); // 如果翻译失败，返回原始字幕
+        console.error("Translation failed:", err);
+        $done({ body }); // 翻译失败时返回原始字幕
     });
 }
 
@@ -85,8 +96,14 @@ async function translateSubtitles(subtitles, engine, sl, tl) {
                 url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(subtitles[i])}`,
                 method: "GET"
             };
-            let response = await send_request(options);
-            translated.push(response[0]?.[0]?.[0] || subtitles[i]); // 获取翻译结果
+            try {
+                let response = await send_request(options);
+                console.log(`Original: ${subtitles[i]} | Translated: ${response[0]?.[0]?.[0]}`);
+                translated.push(response[0]?.[0]?.[0] || subtitles[i]);
+            } catch (e) {
+                console.error("Translation error:", e);
+                translated.push(subtitles[i]); // 翻译失败时保留原文
+            }
         }
     } else if (engine === "DeepL") {
         for (let i = 0; i < subtitles.length; i++) {
@@ -100,8 +117,13 @@ async function translateSubtitles(subtitles, engine, sl, tl) {
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: `auth_key=${setting.dkey}&text=${encodeURIComponent(subtitles[i])}&target_lang=${tl}`
             };
-            let response = await send_request(options);
-            translated.push(response.translations?.[0]?.text || subtitles[i]); // 获取翻译结果
+            try {
+                let response = await send_request(options);
+                translated.push(response.translations?.[0]?.text || subtitles[i]);
+            } catch (e) {
+                console.error("Translation error:", e);
+                translated.push(subtitles[i]); // 翻译失败时保留原文
+            }
         }
     }
     return translated;
