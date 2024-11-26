@@ -1,13 +1,22 @@
 let url = $request.url;
 
+// Surge 持久化存储函数
+function saveSetting(key, value) {
+    return $persistentStore.write(value, key);
+}
+
+function loadSetting(key) {
+    return $persistentStore.read(key) || null;
+}
+
 // 默认设置
 let default_settings = {
     Tubi: {
-        type: "Google", // 可选: Google, DeepL, External, Disable
+        type: "Google", // 翻译引擎：Google, DeepL, External, Disable
         lang: "English",
-        sl: "auto",
-        tl: "zh-CN",
-        line: "s", // 可选: "f" 翻译在上, "s" 原文在上
+        sl: "auto", // 源语言
+        tl: "zh-CN", // 目标语言
+        line: "s", // "f" 翻译在上，"s" 原文在上
         dkey: "null", // DeepL API 密钥
         s_subtitles_url: "null",
         t_subtitles_url: "null",
@@ -20,9 +29,14 @@ let default_settings = {
     }
 };
 
-let settings = $prefs.valueForKey("settings");
-if (!settings) settings = default_settings;
-if (typeof settings === "string") settings = JSON.parse(settings);
+// 加载设置
+let settings = loadSetting("settings");
+if (!settings) {
+    settings = default_settings;
+    saveSetting("settings", JSON.stringify(settings));
+} else {
+    settings = JSON.parse(settings);
+}
 
 let service = "";
 if (url.match(/s\.adrise\.tv/)) service = "Tubi";
@@ -37,7 +51,7 @@ if (url.match(/\.m3u8/)) {
     if (body.match(patt)) {
         let subtitles_url = url.replace(/\/[^\/]+$/, `/${body.match(patt)[1]}`);
         settings[service].t_subtitles_url = subtitles_url;
-        $prefs.setValueForKey(JSON.stringify(settings), "settings");
+        saveSetting("settings", JSON.stringify(settings));
     }
     $done({ body });
 }
@@ -79,7 +93,7 @@ if (url.match(/\.vtt/)) {
         $done({ body: translatedBody });
     }).catch(err => {
         console.error("Translation failed:", err);
-        $done({ body }); // 翻译失败时返回原始字幕
+        $done({ body });
     });
 }
 
@@ -89,7 +103,7 @@ function rebuildVTT(timeline, original, translated, line) {
     for (let i = 0; i < timeline.length; i++) {
         result += `${timeline[i]}\n`;
         if (original[i].trim() === "") {
-            result += `\n\n`; // 保留空白行
+            result += `\n\n`;
         } else if (line === "s") {
             result += `${original[i]}\n${translated[i]}\n\n`; // 原文在上，翻译在下
         } else if (line === "f") {
@@ -114,11 +128,10 @@ async function translateSubtitles(subtitles, engine, sl, tl) {
             };
             try {
                 let response = await send_request(options);
-                console.log(`Original: ${subtitles[i]} | Translated: ${response[0]?.[0]?.[0]}`);
                 translated.push(response[0]?.[0]?.[0] || subtitles[i]);
             } catch (e) {
                 console.error("Translation error:", e);
-                translated.push(subtitles[i]); // 翻译失败时保留原文
+                translated.push(subtitles[i]);
             }
         }
     } else if (engine === "DeepL") {
@@ -138,7 +151,7 @@ async function translateSubtitles(subtitles, engine, sl, tl) {
                 translated.push(response.translations?.[0]?.text || subtitles[i]);
             } catch (e) {
                 console.error("Translation error:", e);
-                translated.push(subtitles[i]); // 翻译失败时保留原文
+                translated.push(subtitles[i]);
             }
         }
     }
