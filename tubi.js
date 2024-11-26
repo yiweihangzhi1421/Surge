@@ -49,13 +49,21 @@ let setting = settings[service];
 if (url.match(/\.m3u8/)) {
     let body = $response.body; // 获取 HTTP 响应的 body
     console.log("Processing .m3u8 file...");
+    console.log("Original .m3u8 Content:\n", body);
+
+    // 匹配 .vtt 文件的 URL
     let patt = /#EXTINF:.+\n(.+\.vtt)/;
-    if (body.match(patt)) {
-        let subtitles_url = url.replace(/\/[^\/]+$/, `/${body.match(patt)[1]}`);
+    let match = body.match(patt);
+
+    if (match && match[1]) {
+        let subtitles_url = url.replace(/\/[^\/]+$/, `/${match[1]}`);
         settings[service].t_subtitles_url = subtitles_url;
         saveSetting("settings", JSON.stringify(settings));
         console.log("Extracted subtitles URL:", subtitles_url);
+    } else {
+        console.error("Failed to extract subtitles URL from .m3u8 file.");
     }
+
     $done({ body });
 }
 
@@ -69,6 +77,8 @@ if (url.match(/\.vtt/)) {
     }
 
     let body = $response.body; // 获取 HTTP 响应的 body
+    console.log("Original .vtt Content:\n", body);
+
     // 解析 WebVTT 文件
     let lines = body.split("\n");
     let timelineRegex = /\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}/;
@@ -78,13 +88,19 @@ if (url.match(/\.vtt/)) {
     for (let i = 0; i < lines.length; i++) {
         if (timelineRegex.test(lines[i])) {
             timeline.push(lines[i]); // 保存时间轴
-            subtitles.push(lines[i + 1] || ""); // 保存字幕文本
+            subtitles.push(lines[i + 1]?.trim() || ""); // 保存字幕文本，去除多余空格
             i++; // 跳过字幕文本行
         }
     }
 
     console.log("Parsed timeline:", timeline);
     console.log("Parsed subtitles:", subtitles);
+
+    // 如果没有解析到内容，直接返回原始内容
+    if (timeline.length === 0 || subtitles.length === 0) {
+        console.error("Failed to parse .vtt file. Returning original content.");
+        $done({ body });
+    }
 
     // 调用翻译服务
     translateSubtitles(subtitles, setting.type, setting.sl, setting.tl).then(translated => {
