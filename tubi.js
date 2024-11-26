@@ -74,6 +74,10 @@ async function translateSubtitles(subtitles, engine, sl, tl) {
     let translated = [];
     if (engine == "Google") {
         for (let i = 0; i < subtitles.length; i++) {
+            if (subtitles[i].trim() === "") {
+                translated.push(""); // 跳过空白字幕
+                continue;
+            }
             let options = {
                 url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${sl}&tl=${tl}`,
                 method: "POST",
@@ -85,6 +89,10 @@ async function translateSubtitles(subtitles, engine, sl, tl) {
         }
     } else if (engine == "DeepL") {
         for (let i = 0; i < subtitles.length; i++) {
+            if (subtitles[i].trim() === "") {
+                translated.push(""); // 跳过空白字幕
+                continue;
+            }
             let options = {
                 url: "https://api-free.deepl.com/v2/translate",
                 method: "POST",
@@ -103,7 +111,9 @@ function rebuildVTT(timeline, original, translated, line) {
     let result = "WEBVTT\n\n";
     for (let i = 0; i < timeline.length; i++) {
         result += `${timeline[i]}\n`;
-        if (line == "s") {
+        if (original[i].trim() === "") {
+            result += `\n\n`; // 保留空白行
+        } else if (line == "s") {
             result += `${original[i]}\n${translated[i]}\n\n`; // 原文在上，翻译在下
         } else if (line == "f") {
             result += `${translated[i]}\n${original[i]}\n\n`; // 翻译在上，原文在下
