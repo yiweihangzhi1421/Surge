@@ -74,13 +74,29 @@ if (url.match(/\.vtt/)) {
 
         // 重建 WebVTT 文件
         let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
-        console.log("Final subtitle body:", translatedBody);
+        console.log("Generated WEBVTT Content:\n", translatedBody);
 
         $done({ body: translatedBody });
     }).catch(err => {
         console.error("Translation failed:", err);
         $done({ body }); // 翻译失败时返回原始字幕
     });
+}
+
+// 重建 WebVTT 文件
+function rebuildVTT(timeline, original, translated, line) {
+    let result = "WEBVTT\n\n";
+    for (let i = 0; i < timeline.length; i++) {
+        result += `${timeline[i]}\n`;
+        if (original[i].trim() === "") {
+            result += `\n\n`; // 保留空白行
+        } else if (line === "s") {
+            result += `${original[i]}\n${translated[i]}\n\n`; // 原文在上，翻译在下
+        } else if (line === "f") {
+            result += `${translated[i]}\n${original[i]}\n\n`; // 翻译在上，原文在下
+        }
+    }
+    return result;
 }
 
 // 翻译字幕文本
@@ -127,22 +143,6 @@ async function translateSubtitles(subtitles, engine, sl, tl) {
         }
     }
     return translated;
-}
-
-// 重建 WebVTT 文件
-function rebuildVTT(timeline, original, translated, line) {
-    let result = "WEBVTT\n\n";
-    for (let i = 0; i < timeline.length; i++) {
-        result += `${timeline[i]}\n`;
-        if (original[i].trim() === "") {
-            result += `\n\n`; // 保留空白行
-        } else if (line === "s") {
-            result += `${original[i]}\n${translated[i]}\n\n`; // 原文在上，翻译在下
-        } else if (line === "f") {
-            result += `${translated[i]}\n${original[i]}\n\n`; // 翻译在上，原文在下
-        }
-    }
-    return result;
 }
 
 // HTTP 请求封装
