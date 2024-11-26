@@ -76,8 +76,16 @@ if (url.match(/\.vtt/)) {
         $done({ body: $response.body });
     }
 
+    console.log("Response Headers:", $response.headers);
+    console.log("Response Status:", $response.status);
+
     let body = $response.body; // 获取 HTTP 响应的 body
     console.log("Original .vtt Content:\n", body);
+
+    if (!body || body.trim() === "") {
+        console.error("The .vtt file content is empty. Returning original response.");
+        $done({ body });
+    }
 
     // 解析 WebVTT 文件
     let lines = body.split("\n");
