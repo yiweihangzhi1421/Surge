@@ -7,7 +7,8 @@ const CONFIG = {
             sl: "auto",        // 源语言
             tl: "zh-CN",       // 目标语言
             line: "s",         // "s" 原文在上，翻译在下
-            dkey: ""           // DeepL API key
+            dkey: "",          // DeepL API key
+            timeout: 5000      // 请求超时时间（毫秒）
         }
     },
     REGEX: {
@@ -15,91 +16,224 @@ const CONFIG = {
         VTT: /\.vtt/,
         TIMELINE: /\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}\.\d{3}/,
         VTT_PATTERN: /#EXTINF:.+\n([^\n]+\.vtt)/
-    }
+    },
+    MAX_RETRY: 3,           // 最大重试次数
+    RETRY_DELAY: 1000,      // 重试延迟（毫秒）
+    BATCH_SIZE: 5           // 批量处理字幕的数量
 };
+
+// 错误处理类
+class SubtitleError extends Error {
+    constructor(message, type) {
+        super(message);
+        this.name = 'SubtitleError';
+        this.type = type;
+    }
+}
 
 // VTT 处理类
 class VTTProcessor {
     constructor(body) {
         this.body = body;
         this.lines = body.split("\n");
-        this.timeline = [];
         this.subtitles = [];
     }
 
     parse() {
-        if (!this.body || this.body.trim() === "") {
-            throw new Error("VTT 内容为空");
-        }
-
-        let currentEntry = null;
-
-        for (let i = 0; i < this.lines.length; i++) {
-            const line = this.lines[i].trim();
-
-            // 跳过 WEBVTT 头部
-            if (line === "WEBVTT") continue;
-
-            // 检测时间轴
-            if (CONFIG.REGEX.TIMELINE.test(line)) {
-                if (currentEntry) {
-                    this.subtitles.push(currentEntry);
-                }
-                currentEntry = {
-                    timeCode: line,
-                    text: []
-                };
-            } else if (currentEntry && line !== "") {
-                currentEntry.text.push(line);
+        try {
+            if (!this.body?.trim()) {
+                throw new SubtitleError("VTT 内容为空", "EMPTY_CONTENT");
             }
-        }
 
-        // 添加最后一个条目
-        if (currentEntry) {
-            this.subtitles.push(currentEntry);
-        }
+            let currentEntry = null;
 
-        if (this.subtitles.length === 0) {
-            throw new Error("没有找到有效的字幕内容");
-        }
+            for (const line of this.lines) {
+                const trimmedLine = line.trim();
+                
+                if (trimmedLine === "WEBVTT") continue;
 
-        return this.subtitles;
+                if (CONFIG.REGEX.TIMELINE.test(trimmedLine)) {
+                    if (currentEntry) {
+                        this.subtitles.push(currentEntry);
+                    }
+                    currentEntry = {
+                        timeCode: trimmedLine,
+                        text: []
+                    };
+                } else if (currentEntry && trimmedLine) {
+                    currentEntry.text.push(trimmedLine);
+                }
+            }
+
+            if (currentEntry) {
+                this.subtitles.push(currentEntry);
+            }
+
+            if (!this.subtitles.length) {
+                throw new SubtitleError("没有找到有效的字幕内容", "NO_SUBTITLES");
+            }
+
+            return this.subtitles;
+        } catch (error) {
+            console.error("解析 VTT 失败:", error);
+            throw error;
+        }
+    }
+
+    static shouldTranslate(text) {
+        if (!text || typeof text !== 'string') return false;
+        // 不翻译音乐标记和音效
+        if (/^\([^)]+\)$/.test(text)) return false;
+        // 不翻译空行或只有特殊字符的行
+        return !!text.replace(/[♪()]/g, '').trim();
+    }
+
+    static cleanText(text) {
+        if (!text) return '';
+        return text.replace(/\s+/g, ' ').trim();
     }
 
     static rebuild(subtitles, position = "s") {
-        let result = "WEBVTT\n\n";
-        
-        for (const subtitle of subtitles) {
-            // 确保每个字幕块都包含时间码
-            result += subtitle.timeCode + "\n";
+        try {
+            let result = "WEBVTT\n\n";
             
-            // 根据字幕位置设置（s: 原文在上，翻译在下；t: 翻译在上，原文在下）
-            if (position === "s") {
-                // 添加英文原文（只取第一行）
-                result += subtitle.originalText[0] + "\n";
-                // 添加中文翻译（只取第一行）
-                if (subtitle.translatedText && subtitle.translatedText.length > 0) {
-                    result += subtitle.translatedText[0] + "\n";
+            for (const subtitle of subtitles) {
+                if (!subtitle?.timeCode) continue;
+
+                result += subtitle.timeCode + "\n";
+                
+                const originalTexts = subtitle.originalText || subtitle.text || [];
+                
+                for (let i = 0; i < originalTexts.length; i++) {
+                    const originalLine = originalTexts[i] || '';
+                    const translatedLine = subtitle.translatedText?.[i] || '';
+                    
+                    if (position === "s") {
+                        result += originalLine + "\n";
+                        if (this.shouldTranslate(originalLine) && translatedLine) {
+                            result += translatedLine + "\n";
+                        }
+                    } else {
+                        if (this.shouldTranslate(originalLine) && translatedLine) {
+                            result += translatedLine + "\n";
+                        }
+                        result += originalLine + "\n";
+                    }
                 }
-            } else {
-                // 添加中文翻译（只取第一行）
-                if (subtitle.translatedText && subtitle.translatedText.length > 0) {
-                    result += subtitle.translatedText[0] + "\n";
-                }
-                // 添加英文原文（只取第一行）
-                result += subtitle.originalText[0] + "\n";
+                
+                result += "\n";
             }
             
-            // 添加空行分隔不同的字幕块
-            result += "\n";
+            return result;
+        } catch (error) {
+            console.error("重建 VTT 失败:", error);
+            throw new SubtitleError("重建字幕失败", "REBUILD_ERROR");
         }
-        
-        return result;
     }
 }
 
-// 翻译服务类保持不变...
+// 翻译服务类
+class TranslationService {
+    static async translate(subtitles, engine, sl, tl, dkey) {
+        const translatedSubtitles = [];
+        const batchSize = CONFIG.BATCH_SIZE;
+        
+        for (let i = 0; i < subtitles.length; i += batchSize) {
+            const batch = subtitles.slice(i, i + batchSize);
+            const batchPromises = batch.map(subtitle => this._translateSubtitle(
+                subtitle, engine, sl, tl, dkey
+            ));
+            
+            const results = await Promise.all(batchPromises);
+            translatedSubtitles.push(...results);
+        }
 
+        return translatedSubtitles;
+    }
+
+    static async _translateSubtitle(subtitle, engine, sl, tl, dkey) {
+        const translatedEntry = {
+            timeCode: subtitle.timeCode,
+            originalText: subtitle.text,
+            translatedText: []
+        };
+
+        for (const line of subtitle.text) {
+            if (!VTTProcessor.shouldTranslate(line)) {
+                translatedEntry.translatedText.push("");
+                continue;
+            }
+
+            const cleanedText = VTTProcessor.cleanText(line);
+            if (!cleanedText) {
+                translatedEntry.translatedText.push("");
+                continue;
+            }
+
+            let translatedLine = "";
+            let retryCount = 0;
+
+            while (retryCount < CONFIG.MAX_RETRY) {
+                try {
+                    translatedLine = await this._translateTextWithTimeout(
+                        cleanedText,
+                        engine,
+                        sl,
+                        tl,
+                        dkey
+                    );
+                    break;
+                } catch (error) {
+                    retryCount++;
+                    if (retryCount === CONFIG.MAX_RETRY) {
+                        console.error(`翻译失败 (${retryCount}次重试): "${cleanedText}"`, error);
+                        translatedLine = "";
+                    } else {
+                        await new Promise(resolve => 
+                            setTimeout(resolve, CONFIG.RETRY_DELAY)
+                        );
+                    }
+                }
+            }
+
+            translatedEntry.translatedText.push(translatedLine);
+        }
+
+        return translatedEntry;
+    }
+
+    static async _translateTextWithTimeout(text, engine, sl, tl, dkey) {
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('翻译请求超时')), 
+                CONFIG.DEFAULT_SETTINGS.Tubi.timeout
+            );
+        });
+
+        const translatePromise = this._translateText(text, engine, sl, tl, dkey);
+        return Promise.race([translatePromise, timeoutPromise]);
+    }
+
+    static _getRequestOptions(text, engine, sl, tl, dkey) {
+        if (engine === "Google") {
+            return {
+                url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`,
+                method: "GET",
+                timeout: CONFIG.DEFAULT_SETTINGS.Tubi.timeout
+            };
+        } else if (engine === "DeepL") {
+            return {
+                url: "https://api-free.deepl.com/v2/translate",
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `auth_key=${dkey}&text=${encodeURIComponent(text)}&target_lang=${tl}`,
+                timeout: CONFIG.DEFAULT_SETTINGS.Tubi.timeout
+            };
+        }
+        throw new SubtitleError(`不支持的翻译引擎: ${engine}`, "UNSUPPORTED_ENGINE");
+    }
+}
+
+// 主处理函数
 async function handleVTTFile(setting) {
     console.log("处理 VTT 文件...");
     
@@ -130,6 +264,7 @@ async function handleVTTFile(setting) {
         $done({ body: result });
     } catch (error) {
         console.error("处理 VTT 文件时出错:", error);
+        // 出错时返回原始字幕
         $done({ body: $response.body });
     }
 }
