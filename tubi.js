@@ -47,24 +47,28 @@ let setting = settings[service];
 
 // 处理 .m3u8 文件
 if (url.match(/\.m3u8/)) {
+    let body = $response.body; // 获取 HTTP 响应的 body
+    console.log("Processing .m3u8 file...");
     let patt = /#EXTINF:.+\n(.+\.vtt)/;
     if (body.match(patt)) {
         let subtitles_url = url.replace(/\/[^\/]+$/, `/${body.match(patt)[1]}`);
         settings[service].t_subtitles_url = subtitles_url;
         saveSetting("settings", JSON.stringify(settings));
+        console.log("Extracted subtitles URL:", subtitles_url);
     }
     $done({ body });
 }
 
 // 处理 .vtt 文件
 if (url.match(/\.vtt/)) {
-    console.log("Processing .vtt file:", url);
+    console.log("Processing .vtt file...");
 
     if (setting.type === "Disable") {
         console.log("Translation disabled, returning original subtitles.");
-        $done({ body });
+        $done({ body: $response.body });
     }
 
+    let body = $response.body; // 获取 HTTP 响应的 body
     // 解析 WebVTT 文件
     let lines = body.split("\n");
     let timelineRegex = /\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}/;
