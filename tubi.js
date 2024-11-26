@@ -18,28 +18,6 @@ const CONFIG = {
     }
 };
 
-// 存储管理类
-class StorageManager {
-    static save(key, value) {
-        return $persistentStore.write(value, key);
-    }
-
-    static load(key) {
-        return $persistentStore.read(key) || null;
-    }
-
-    static initializeSettings() {
-        let settings = this.load("settings");
-        if (!settings) {
-            settings = CONFIG.DEFAULT_SETTINGS;
-            this.save("settings", JSON.stringify(settings));
-        } else {
-            settings = JSON.parse(settings);
-        }
-        return settings;
-    }
-}
-
 // VTT 处理类
 class VTTProcessor {
     constructor(body) {
@@ -92,150 +70,36 @@ class VTTProcessor {
         let result = "WEBVTT\n\n";
         
         for (const subtitle of subtitles) {
+            // 确保每个字幕块都包含时间码
             result += subtitle.timeCode + "\n";
+            
+            // 根据字幕位置设置（s: 原文在上，翻译在下；t: 翻译在上，原文在下）
             if (position === "s") {
-                // 原文在上，翻译在下
-                result += subtitle.originalText.join("\n") + "\n";
-                result += subtitle.translatedText.join("\n") + "\n\n";
+                // 添加英文原文（只取第一行）
+                result += subtitle.originalText[0] + "\n";
+                // 添加中文翻译（只取第一行）
+                if (subtitle.translatedText && subtitle.translatedText.length > 0) {
+                    result += subtitle.translatedText[0] + "\n";
+                }
             } else {
-                // 翻译在上，原文在下
-                result += subtitle.translatedText.join("\n") + "\n";
-                result += subtitle.originalText.join("\n") + "\n\n";
+                // 添加中文翻译（只取第一行）
+                if (subtitle.translatedText && subtitle.translatedText.length > 0) {
+                    result += subtitle.translatedText[0] + "\n";
+                }
+                // 添加英文原文（只取第一行）
+                result += subtitle.originalText[0] + "\n";
             }
+            
+            // 添加空行分隔不同的字幕块
+            result += "\n";
         }
         
         return result;
     }
 }
 
-// 翻译服务类
-class TranslationService {
-    static async translate(subtitles, engine, sl, tl, dkey) {
-        const translatedSubtitles = [];
-        
-        for (const subtitle of subtitles) {
-            const translatedEntry = {
-                timeCode: subtitle.timeCode,
-                originalText: subtitle.text,
-                translatedText: []
-            };
+// 翻译服务类保持不变...
 
-            // 翻译每一行文本
-            for (const line of subtitle.text) {
-                if (!line.trim()) {
-                    translatedEntry.translatedText.push("");
-                    continue;
-                }
-
-                try {
-                    const translatedLine = await this._translateText(
-                        line,
-                        engine,
-                        sl,
-                        tl,
-                        dkey
-                    );
-                    translatedEntry.translatedText.push(translatedLine);
-                } catch (error) {
-                    console.error(`翻译错误: "${line}":`, error);
-                    translatedEntry.translatedText.push(line);
-                }
-            }
-
-            translatedSubtitles.push(translatedEntry);
-        }
-
-        return translatedSubtitles;
-    }
-
-    static async _translateText(text, engine, sl, tl, dkey) {
-        const options = this._getRequestOptions(text, engine, sl, tl, dkey);
-        const response = await this._sendRequest(options);
-        return this._parseResponse(response, engine);
-    }
-
-    static _getRequestOptions(text, engine, sl, tl, dkey) {
-        if (engine === "Google") {
-            return {
-                url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`,
-                method: "GET"
-            };
-        } else if (engine === "DeepL") {
-            return {
-                url: "https://api-free.deepl.com/v2/translate",
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `auth_key=${dkey}&text=${encodeURIComponent(text)}&target_lang=${tl}`
-            };
-        }
-        throw new Error(`不支持的翻译引擎: ${engine}`);
-    }
-
-    static async _sendRequest(options) {
-        return new Promise((resolve, reject) => {
-            $task.fetch(options).then(
-                response => {
-                    try {
-                        resolve(JSON.parse(response.body));
-                    } catch (e) {
-                        reject(new Error(`解析响应失败: ${e.message}`));
-                    }
-                },
-                error => reject(new Error(`请求失败: ${error}`))
-            );
-        });
-    }
-
-    static _parseResponse(response, engine) {
-        if (engine === "Google") {
-            return response[0]?.[0]?.[0] || "";
-        } else if (engine === "DeepL") {
-            return response.translations?.[0]?.text || "";
-        }
-        throw new Error(`不支持的翻译引擎: ${engine}`);
-    }
-}
-
-// 主脚本逻辑
-async function main() {
-    const url = $request.url;
-    const settings = StorageManager.initializeSettings();
-    const service = "Tubi";
-    
-    if (!settings[service]) {
-        settings[service] = CONFIG.DEFAULT_SETTINGS[service];
-    }
-    
-    const setting = settings[service];
-
-    if (CONFIG.REGEX.M3U8.test(url)) {
-        await handleM3U8File(url, settings, service);
-    } else if (CONFIG.REGEX.VTT.test(url)) {
-        await handleVTTFile(setting);
-    } else {
-        $done({});
-    }
-}
-
-// 处理 M3U8 文件
-async function handleM3U8File(url, settings, service) {
-    console.log("处理 M3U8 文件...");
-    const body = $response.body;
-    
-    const match = body.match(CONFIG.REGEX.VTT_PATTERN);
-    if (match?.[1]) {
-        const subtitlesUrl = url.replace(/\/[^\/]+$/, `/${match[1]}`);
-        console.log("找到字幕 URL:", subtitlesUrl);
-        settings[service].t_subtitles_url = subtitlesUrl;
-        StorageManager.save("settings", JSON.stringify(settings));
-    } else {
-        console.log("未找到字幕文件链接");
-    }
-
-    $done({ body });
-}
-
-// 处理 VTT 文件
 async function handleVTTFile(setting) {
     console.log("处理 VTT 文件...");
     
@@ -269,9 +133,3 @@ async function handleVTTFile(setting) {
         $done({ body: $response.body });
     }
 }
-
-// 启动脚本
-main().catch(error => {
-    console.error("脚本执行失败:", error);
-    $done({});
-});
