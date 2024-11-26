@@ -8,26 +8,116 @@ const CONFIG = {
             tl: "zh-CN",       // 目标语言
             line: "s",         // "s" 原文在上，翻译在下
             dkey: "",          // DeepL API key
-            timeout: 5000      // 请求超时时间（毫秒）
+            timeout: 2000      // 请求超时时间（毫秒）
         }
     },
     REGEX: {
         M3U8: /\.m3u8/,
         VTT: /\.vtt/,
         TIMELINE: /\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}\.\d{3}/,
-        VTT_PATTERN: /#EXTINF:.+\n([^\n]+\.vtt)/
+        VTT_PATTERN: /#EXTINF:.+\n([^\n]+\.vtt)/,
+        MUSIC: /^\([^)]+\)$/,
+        WHITESPACE: /\s+/g
     },
-    MAX_RETRY: 3,           // 最大重试次数
-    RETRY_DELAY: 1000,      // 重试延迟（毫秒）
-    BATCH_SIZE: 5           // 批量处理字幕的数量
+    BATCH_SIZE: 2,           // 批处理大小
+    MAX_ATTEMPTS: 1          // 最大尝试次数
 };
 
-// 错误处理类
-class SubtitleError extends Error {
-    constructor(message, type) {
-        super(message);
-        this.name = 'SubtitleError';
-        this.type = type;
+// 存储管理类
+class StorageManager {
+    static save(key, value) {
+        try {
+            return $persistentStore.write(value, key);
+        } catch (error) {
+            console.error('存储失败:', error);
+            return false;
+        }
+    }
+
+    static load(key) {
+        try {
+            return $persistentStore.read(key) || null;
+        } catch (error) {
+            console.error('读取失败:', error);
+            return null;
+        }
+    }
+
+    static initializeSettings() {
+        let settings = this.load("settings");
+        if (!settings) {
+            settings = CONFIG.DEFAULT_SETTINGS;
+            this.save("settings", JSON.stringify(settings));
+        } else {
+            try {
+                settings = JSON.parse(settings);
+            } catch {
+                settings = CONFIG.DEFAULT_SETTINGS;
+                this.save("settings", JSON.stringify(settings));
+            }
+        }
+        return settings;
+    }
+}
+
+// 翻译服务类
+class TranslationService {
+    static async translateText(text, engine, sl, tl, dkey) {
+        if (engine === "Google") {
+            return this._googleTranslate(text, sl, tl);
+        } else if (engine === "DeepL") {
+            return this._deeplTranslate(text, tl, dkey);
+        }
+        throw new Error(`不支持的翻译引擎: ${engine}`);
+    }
+
+    static async _googleTranslate(text, sl, tl) {
+        const options = {
+            url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`,
+            method: "GET"
+        };
+
+        return this._makeRequest(options);
+    }
+
+    static async _deeplTranslate(text, tl, dkey) {
+        const options = {
+            url: "https://api-free.deepl.com/v2/translate",
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: `auth_key=${dkey}&text=${encodeURIComponent(text)}&target_lang=${tl}`
+        };
+
+        return this._makeRequest(options, true);
+    }
+
+    static async _makeRequest(options, isDeepL = false) {
+        return new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(
+                () => reject(new Error('请求超时')), 
+                CONFIG.DEFAULT_SETTINGS.Tubi.timeout
+            );
+
+            $task.fetch(options).then(
+                response => {
+                    clearTimeout(timeoutId);
+                    try {
+                        const result = JSON.parse(response.body);
+                        if (isDeepL) {
+                            resolve(result.translations?.[0]?.text || "");
+                        } else {
+                            resolve(result[0]?.[0]?.[0] || "");
+                        }
+                    } catch {
+                        reject(new Error('解析响应失败'));
+                    }
+                },
+                error => {
+                    clearTimeout(timeoutId);
+                    reject(error);
+                }
+            );
+        });
     }
 }
 
@@ -35,123 +125,71 @@ class SubtitleError extends Error {
 class VTTProcessor {
     constructor(body) {
         this.body = body;
-        this.lines = body.split("\n");
         this.subtitles = [];
     }
 
     parse() {
-        try {
-            if (!this.body?.trim()) {
-                throw new SubtitleError("VTT 内容为空", "EMPTY_CONTENT");
-            }
-
-            let currentEntry = null;
-
-            for (const line of this.lines) {
-                const trimmedLine = line.trim();
-                
-                if (trimmedLine === "WEBVTT") continue;
-
-                if (CONFIG.REGEX.TIMELINE.test(trimmedLine)) {
-                    if (currentEntry) {
-                        this.subtitles.push(currentEntry);
-                    }
-                    currentEntry = {
-                        timeCode: trimmedLine,
-                        text: []
-                    };
-                } else if (currentEntry && trimmedLine) {
-                    currentEntry.text.push(trimmedLine);
-                }
-            }
-
-            if (currentEntry) {
-                this.subtitles.push(currentEntry);
-            }
-
-            if (!this.subtitles.length) {
-                throw new SubtitleError("没有找到有效的字幕内容", "NO_SUBTITLES");
-            }
-
-            return this.subtitles;
-        } catch (error) {
-            console.error("解析 VTT 失败:", error);
-            throw error;
+        if (!this.body?.trim()) {
+            throw new Error("VTT 内容为空");
         }
+
+        const lines = this.body.split("\n");
+        let currentEntry = null;
+
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            
+            if (trimmedLine === "WEBVTT") continue;
+
+            if (CONFIG.REGEX.TIMELINE.test(trimmedLine)) {
+                if (currentEntry) {
+                    this.subtitles.push(currentEntry);
+                }
+                currentEntry = {
+                    timeCode: trimmedLine,
+                    text: []
+                };
+            } else if (currentEntry && trimmedLine) {
+                currentEntry.text.push(trimmedLine);
+            }
+        }
+
+        if (currentEntry) {
+            this.subtitles.push(currentEntry);
+        }
+
+        return this.subtitles;
     }
 
     static shouldTranslate(text) {
         if (!text || typeof text !== 'string') return false;
-        // 不翻译音乐标记和音效
-        if (/^\([^)]+\)$/.test(text)) return false;
-        // 不翻译空行或只有特殊字符的行
-        return !!text.replace(/[♪()]/g, '').trim();
+        // 跳过音乐标记
+        if (CONFIG.REGEX.MUSIC.test(text)) return false;
+        // 跳过空行或只有特殊字符的行
+        const cleaned = text.replace(/[♪()]/g, '').trim();
+        return cleaned.length > 0;
     }
 
     static cleanText(text) {
         if (!text) return '';
-        return text.replace(/\s+/g, ' ').trim();
+        return text.replace(CONFIG.REGEX.WHITESPACE, ' ').trim();
     }
 
-    static rebuild(subtitles, position = "s") {
-        try {
-            let result = "WEBVTT\n\n";
-            
-            for (const subtitle of subtitles) {
-                if (!subtitle?.timeCode) continue;
-
-                result += subtitle.timeCode + "\n";
-                
-                const originalTexts = subtitle.originalText || subtitle.text || [];
-                
-                for (let i = 0; i < originalTexts.length; i++) {
-                    const originalLine = originalTexts[i] || '';
-                    const translatedLine = subtitle.translatedText?.[i] || '';
-                    
-                    if (position === "s") {
-                        result += originalLine + "\n";
-                        if (this.shouldTranslate(originalLine) && translatedLine) {
-                            result += translatedLine + "\n";
-                        }
-                    } else {
-                        if (this.shouldTranslate(originalLine) && translatedLine) {
-                            result += translatedLine + "\n";
-                        }
-                        result += originalLine + "\n";
-                    }
-                }
-                
-                result += "\n";
-            }
-            
-            return result;
-        } catch (error) {
-            console.error("重建 VTT 失败:", error);
-            throw new SubtitleError("重建字幕失败", "REBUILD_ERROR");
-        }
-    }
-}
-
-// 翻译服务类
-class TranslationService {
-    static async translate(subtitles, engine, sl, tl, dkey) {
+    async translate(setting) {
         const translatedSubtitles = [];
-        const batchSize = CONFIG.BATCH_SIZE;
         
-        for (let i = 0; i < subtitles.length; i += batchSize) {
-            const batch = subtitles.slice(i, i + batchSize);
-            const batchPromises = batch.map(subtitle => this._translateSubtitle(
-                subtitle, engine, sl, tl, dkey
-            ));
-            
-            const results = await Promise.all(batchPromises);
-            translatedSubtitles.push(...results);
+        for (let i = 0; i < this.subtitles.length; i += CONFIG.BATCH_SIZE) {
+            const batch = this.subtitles.slice(i, i + CONFIG.BATCH_SIZE);
+            const batchResults = await Promise.all(
+                batch.map(subtitle => this._translateSubtitle(subtitle, setting))
+            );
+            translatedSubtitles.push(...batchResults);
         }
 
         return translatedSubtitles;
     }
 
-    static async _translateSubtitle(subtitle, engine, sl, tl, dkey) {
+    async _translateSubtitle(subtitle, setting) {
         const translatedEntry = {
             timeCode: subtitle.timeCode,
             originalText: subtitle.text,
@@ -170,101 +208,119 @@ class TranslationService {
                 continue;
             }
 
-            let translatedLine = "";
-            let retryCount = 0;
-
-            while (retryCount < CONFIG.MAX_RETRY) {
-                try {
-                    translatedLine = await this._translateTextWithTimeout(
-                        cleanedText,
-                        engine,
-                        sl,
-                        tl,
-                        dkey
-                    );
-                    break;
-                } catch (error) {
-                    retryCount++;
-                    if (retryCount === CONFIG.MAX_RETRY) {
-                        console.error(`翻译失败 (${retryCount}次重试): "${cleanedText}"`, error);
-                        translatedLine = "";
-                    } else {
-                        await new Promise(resolve => 
-                            setTimeout(resolve, CONFIG.RETRY_DELAY)
-                        );
-                    }
-                }
+            try {
+                const translatedLine = await TranslationService.translateText(
+                    cleanedText,
+                    setting.type,
+                    setting.sl,
+                    setting.tl,
+                    setting.dkey
+                );
+                translatedEntry.translatedText.push(translatedLine);
+            } catch {
+                translatedEntry.translatedText.push("");
             }
-
-            translatedEntry.translatedText.push(translatedLine);
         }
 
         return translatedEntry;
     }
 
-    static async _translateTextWithTimeout(text, engine, sl, tl, dkey) {
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('翻译请求超时')), 
-                CONFIG.DEFAULT_SETTINGS.Tubi.timeout
-            );
-        });
-
-        const translatePromise = this._translateText(text, engine, sl, tl, dkey);
-        return Promise.race([translatePromise, timeoutPromise]);
-    }
-
-    static _getRequestOptions(text, engine, sl, tl, dkey) {
-        if (engine === "Google") {
-            return {
-                url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`,
-                method: "GET",
-                timeout: CONFIG.DEFAULT_SETTINGS.Tubi.timeout
-            };
-        } else if (engine === "DeepL") {
-            return {
-                url: "https://api-free.deepl.com/v2/translate",
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `auth_key=${dkey}&text=${encodeURIComponent(text)}&target_lang=${tl}`,
-                timeout: CONFIG.DEFAULT_SETTINGS.Tubi.timeout
-            };
+    static rebuild(subtitles, position = "s") {
+        let result = "WEBVTT\n\n";
+        
+        for (const subtitle of subtitles) {
+            // 时间码
+            result += subtitle.timeCode + "\n";
+            
+            // 处理字幕文本
+            const originalTexts = subtitle.originalText || [];
+            const translatedTexts = subtitle.translatedText || [];
+            
+            for (let i = 0; i < originalTexts.length; i++) {
+                const originalLine = originalTexts[i];
+                const translatedLine = translatedTexts[i];
+                
+                if (position === "s") {
+                    result += originalLine + "\n";
+                    if (this.shouldTranslate(originalLine) && translatedLine) {
+                        result += translatedLine + "\n";
+                    }
+                } else {
+                    if (this.shouldTranslate(originalLine) && translatedLine) {
+                        result += translatedLine + "\n";
+                    }
+                    result += originalLine + "\n";
+                }
+            }
+            
+            result += "\n";
         }
-        throw new SubtitleError(`不支持的翻译引擎: ${engine}`, "UNSUPPORTED_ENGINE");
+        
+        return result;
     }
 }
 
-// 主处理函数
-async function handleVTTFile(setting) {
-    console.log("处理 VTT 文件...");
-    
-    if (setting.type === "Disable") {
-        console.log("翻译已禁用，返回原始字幕");
-        $done({ body: $response.body });
-        return;
-    }
-
+// 处理M3U8文件
+async function handleM3U8File(url, settings, service) {
     try {
-        const vttProcessor = new VTTProcessor($response.body);
-        const subtitles = vttProcessor.parse();
-        console.log(`解析到 ${subtitles.length} 条字幕`);
+        const body = $response.body;
+        const match = body.match(CONFIG.REGEX.VTT_PATTERN);
+        
+        if (match?.[1]) {
+            const subtitlesUrl = url.replace(/\/[^\/]+$/, `/${match[1]}`);
+            settings[service].t_subtitles_url = subtitlesUrl;
+            StorageManager.save("settings", JSON.stringify(settings));
+        }
 
-        console.log("开始翻译字幕...");
-        const translatedSubtitles = await TranslationService.translate(
-            subtitles,
-            setting.type,
-            setting.sl,
-            setting.tl,
-            setting.dkey
-        );
-        console.log("字幕翻译完成");
+        $done({ body });
+    } catch (error) {
+        console.error("M3U8处理失败:", error);
+        $done({ body: $response.body });
+    }
+}
 
+// 处理VTT文件
+async function handleVTTFile(setting) {
+    try {
+        if (setting.type === "Disable") {
+            $done({ body: $response.body });
+            return;
+        }
+
+        const processor = new VTTProcessor($response.body);
+        const subtitles = processor.parse();
+        const translatedSubtitles = await processor.translate(setting);
         const result = VTTProcessor.rebuild(translatedSubtitles, setting.line);
-        console.log("双语字幕生成完成");
 
         $done({ body: result });
     } catch (error) {
-        console.error("处理 VTT 文件时出错:", error);
-        // 出错时返回原始字幕
+        console.error("VTT处理失败:", error);
         $done({ body: $response.body });
     }
 }
+
+// 主入口
+async function main() {
+    try {
+        const url = $request.url;
+        const settings = StorageManager.initializeSettings();
+        const service = "Tubi";
+        
+        if (!settings[service]) {
+            settings[service] = CONFIG.DEFAULT_SETTINGS[service];
+        }
+        
+        if (CONFIG.REGEX.M3U8.test(url)) {
+            await handleM3U8File(url, settings, service);
+        } else if (CONFIG.REGEX.VTT.test(url)) {
+            await handleVTTFile(settings[service]);
+        } else {
+            $done({});
+        }
+    } catch (error) {
+        console.error("执行失败:", error);
+        $done({});
+    }
+}
+
+main();
