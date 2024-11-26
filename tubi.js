@@ -17,15 +17,7 @@ let default_settings = {
         sl: "auto", // 源语言
         tl: "zh-CN", // 目标语言
         line: "s", // "f" 翻译在上，"s" 原文在上
-        dkey: "null", // DeepL API 密钥
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
+        dkey: "null" // DeepL API 密钥
     }
 };
 
@@ -38,28 +30,26 @@ if (!settings) {
     settings = JSON.parse(settings);
 }
 
-let service = "";
-if (url.match(/s\.adrise\.tv/)) service = "Tubi";
-
-if (!service) $done({});
+let service = "Tubi";
 if (!settings[service]) settings[service] = default_settings[service];
 let setting = settings[service];
 
 // 处理 .m3u8 文件
 if (url.match(/\.m3u8/)) {
-    let body = $response.body; // 获取 HTTP 响应的 body
     console.log("Processing .m3u8 file...");
+    
+    let body = $response.body; // 获取 HTTP 响应的 body
     console.log("Original .m3u8 Content:\n", body);
 
     // 匹配 .vtt 文件的 URL
-    let patt = /#EXTINF:.+\n(.+\.vtt)/;
+    let patt = /#EXTINF:.+\n([^\n]+\.vtt)/; // 匹配 .vtt 文件路径
     let match = body.match(patt);
 
     if (match && match[1]) {
-        let subtitles_url = url.replace(/\/[^\/]+$/, `/${match[1]}`);
+        let subtitles_url = url.replace(/\/[^\/]+$/, `/${match[1]}`); // 拼接完整路径
+        console.log("Extracted subtitles URL:", subtitles_url);
         settings[service].t_subtitles_url = subtitles_url;
         saveSetting("settings", JSON.stringify(settings));
-        console.log("Extracted subtitles URL:", subtitles_url);
     } else {
         console.error("Failed to extract subtitles URL from .m3u8 file.");
     }
@@ -76,9 +66,6 @@ if (url.match(/\.vtt/)) {
         $done({ body: $response.body });
     }
 
-    console.log("Response Headers:", $response.headers);
-    console.log("Response Status:", $response.status);
-
     let body = $response.body; // 获取 HTTP 响应的 body
     console.log("Original .vtt Content:\n", body);
 
@@ -89,14 +76,14 @@ if (url.match(/\.vtt/)) {
 
     // 解析 WebVTT 文件
     let lines = body.split("\n");
-    let timelineRegex = /\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}/;
+    let timelineRegex = /\d{2}:\d{2}.\d{3} --> \d{2}:\d{2}.\d{3}/;
     let timeline = [];
     let subtitles = [];
 
     for (let i = 0; i < lines.length; i++) {
         if (timelineRegex.test(lines[i])) {
             timeline.push(lines[i]); // 保存时间轴
-            subtitles.push(lines[i + 1]?.trim() || ""); // 保存字幕文本，去除多余空格
+            subtitles.push(lines[i + 1]?.trim() || ""); // 保存字幕文本
             i++; // 跳过字幕文本行
         }
     }
@@ -130,9 +117,7 @@ function rebuildVTT(timeline, original, translated, line) {
     let result = "WEBVTT\n\n";
     for (let i = 0; i < timeline.length; i++) {
         result += `${timeline[i]}\n`;
-        if (original[i].trim() === "") {
-            result += `\n\n`;
-        } else if (line === "s") {
+        if (line === "s") {
             result += `${original[i]}\n${translated[i]}\n\n`; // 原文在上，翻译在下
         } else if (line === "f") {
             result += `${translated[i]}\n${original[i]}\n\n`; // 翻译在上，原文在下
