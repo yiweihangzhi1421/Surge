@@ -4,7 +4,7 @@ let headers = $request.headers;
 // 默认设置
 let default_settings = {
     Tubi: {
-        type: "Google", // 可选: Official, Google, DeepL, External, Disable
+        type: "Google", // 可选: Google, DeepL, External, Disable
         lang: "English",
         sl: "auto",
         tl: "zh-CN",
@@ -23,7 +23,7 @@ let default_settings = {
 
 let settings = $prefs.valueForKey("settings");
 if (!settings) settings = default_settings;
-if (typeof settings == "string") settings = JSON.parse(settings);
+if (typeof settings === "string") settings = JSON.parse(settings);
 
 let service = "";
 if (url.match(/s\.adrise\.tv/)) service = "Tubi";
@@ -45,7 +45,7 @@ if (url.match(/\.m3u8/)) {
 
 // 处理 .vtt 文件
 if (url.match(/\.vtt/)) {
-    if (setting.type == "Disable") $done({ body }); // 用户禁用翻译，直接返回原始字幕
+    if (setting.type === "Disable") $done({ body }); // 用户禁用翻译，直接返回原始字幕
 
     // 解析 WebVTT 文件
     let lines = body.split("\n");
@@ -56,8 +56,8 @@ if (url.match(/\.vtt/)) {
     for (let i = 0; i < lines.length; i++) {
         if (timelineRegex.test(lines[i])) {
             timeline.push(lines[i]); // 保存时间轴
-            subtitles.push(lines[i + 1]); // 保存对应字幕文本
-            i++; // 跳过字幕文本
+            subtitles.push(lines[i + 1] || ""); // 保存对应字幕文本，处理空行
+            i++; // 跳过字幕文本行
         }
     }
 
@@ -66,28 +66,29 @@ if (url.match(/\.vtt/)) {
         // 重建 WebVTT 文件
         let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
         $done({ body: translatedBody });
+    }).catch(err => {
+        console.log("Translation failed:", err);
+        $done({ body }); // 如果翻译失败，返回原始字幕
     });
 }
 
 // 翻译字幕文本
 async function translateSubtitles(subtitles, engine, sl, tl) {
     let translated = [];
-    if (engine == "Google") {
+    if (engine === "Google") {
         for (let i = 0; i < subtitles.length; i++) {
             if (subtitles[i].trim() === "") {
                 translated.push(""); // 跳过空白字幕
                 continue;
             }
             let options = {
-                url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${sl}&tl=${tl}`,
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `q=${encodeURIComponent(subtitles[i])}`
+                url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(subtitles[i])}`,
+                method: "GET"
             };
             let response = await send_request(options);
-            translated.push(response.sentences[0].trans); // 获取翻译结果
+            translated.push(response[0]?.[0]?.[0] || subtitles[i]); // 获取翻译结果
         }
-    } else if (engine == "DeepL") {
+    } else if (engine === "DeepL") {
         for (let i = 0; i < subtitles.length; i++) {
             if (subtitles[i].trim() === "") {
                 translated.push(""); // 跳过空白字幕
@@ -100,7 +101,7 @@ async function translateSubtitles(subtitles, engine, sl, tl) {
                 body: `auth_key=${setting.dkey}&text=${encodeURIComponent(subtitles[i])}&target_lang=${tl}`
             };
             let response = await send_request(options);
-            translated.push(response.translations[0].text); // 获取翻译结果
+            translated.push(response.translations?.[0]?.text || subtitles[i]); // 获取翻译结果
         }
     }
     return translated;
@@ -113,9 +114,9 @@ function rebuildVTT(timeline, original, translated, line) {
         result += `${timeline[i]}\n`;
         if (original[i].trim() === "") {
             result += `\n\n`; // 保留空白行
-        } else if (line == "s") {
+        } else if (line === "s") {
             result += `${original[i]}\n${translated[i]}\n\n`; // 原文在上，翻译在下
-        } else if (line == "f") {
+        } else if (line === "f") {
             result += `${translated[i]}\n${original[i]}\n\n`; // 翻译在上，原文在下
         }
     }
@@ -126,7 +127,11 @@ function rebuildVTT(timeline, original, translated, line) {
 function send_request(options) {
     return new Promise((resolve, reject) => {
         $task.fetch(options).then(response => {
-            resolve(JSON.parse(response.body));
+            try {
+                resolve(JSON.parse(response.body));
+            } catch (e) {
+                reject(e);
+            }
         }, reason => reject(reason));
     });
 }
