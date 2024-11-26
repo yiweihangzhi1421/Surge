@@ -8,152 +8,172 @@ const CONFIG = {
             tl: "zh-CN",       
             line: "s",         
             dkey: "",          
-            timeout: 1500      // 降低超时阈值
+            timeout: 1500      // 1.5秒超时
         }
     },
     REGEX: {
         M3U8: /\.m3u8/,
         VTT: /\.vtt/,
-        TIMELINE: /\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}\.\d{3}/,
+        TIMELINE: /^\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}\.\d{3}/,
         VTT_PATTERN: /#EXTINF:.+\n([^\n]+\.vtt)/,
-        MUSIC: /^\([^)]+\)$/
+        MUSIC: /^\([^)]+\)$/,
+        SPECIAL: /^♪.*♪$/
     }
 };
 
-// 快速字符串处理类
-class StringProcessor {
-    static decodeBody(body) {
-        if (body instanceof Uint8Array) {
-            try {
-                return new TextDecoder('utf-8').decode(body);
-            } catch (e) {
-                console.error('UTF-8解码失败，尝试其他编码:', e);
-                try {
-                    // 尝试其他编码
-                    return new TextDecoder('iso-8859-1').decode(body);
-                } catch {
-                    // 最后的后备方案
-                    return String.fromCharCode.apply(null, body);
-                }
-            }
-        }
-        return body;
-    }
-
-    static cleanText(text) {
-        return text?.trim()?.replace(/\s+/g, ' ') || '';
-    }
-}
-
 // VTT处理类
-class VTTProcessor {
+class VTTHandler {
     static async process(body, setting) {
         try {
-            // 解码文本
-            const content = StringProcessor.decodeBody(body);
-            if (!content) return body;
+            // 处理二进制数据
+            const text = body instanceof Uint8Array ? 
+                new TextDecoder('utf-8').decode(body) : body;
 
-            // 快速分块处理
-            const blocks = content.split('\n\n');
-            const header = blocks[0];
-            if (header !== 'WEBVTT') return body;
+            // 快速分割处理
+            const lines = text.split('\n');
+            const processedLines = [];
+            let isHeader = true;
+            let currentTimeline = null;
+            let currentText = [];
+            let batchPromises = [];
 
-            let result = 'WEBVTT\n\n';
-            let translatePromises = [];
+            // 处理每一行
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
 
-            // 处理每个字幕块
-            for (let i = 1; i < blocks.length; i++) {
-                const block = blocks[i].trim();
-                if (!block) continue;
-
-                const lines = block.split('\n');
-                const timeline = lines.find(line => CONFIG.REGEX.TIMELINE.test(line));
-                if (!timeline) continue;
-
-                const text = lines.find(line => 
-                    line !== timeline && line.trim() && !CONFIG.REGEX.MUSIC.test(line)
-                );
-
-                if (!text) {
-                    // 如果只有时间轴或是音乐标记，直接添加原文
-                    result += block + '\n\n';
+                // 处理头部
+                if (isHeader) {
+                    if (line === 'WEBVTT') {
+                        processedLines.push('WEBVTT', '');
+                        isHeader = false;
+                    }
                     continue;
                 }
 
-                // 收集翻译任务
-                translatePromises.push(
-                    translateBlock(timeline, text)
-                        .catch(err => {
-                            console.error('翻译失败:', err);
-                            return { timeline, text, translation: '' };
-                        })
-                );
-
-                // 每10个任务或最后一块时进行处理
-                if (translatePromises.length >= 10 || i === blocks.length - 1) {
-                    const translations = await Promise.all(translatePromises);
-                    for (const { timeline, text, translation } of translations) {
-                        if (setting.line === 's') {
-                            result += `${timeline}\n${text}\n${translation}\n\n`;
-                        } else {
-                            result += `${timeline}\n${translation}\n${text}\n\n`;
-                        }
+                // 检查时间轴
+                if (CONFIG.REGEX.TIMELINE.test(line)) {
+                    // 处理前一个字幕块
+                    if (currentTimeline && currentText.length > 0) {
+                        batchPromises.push(this._processSubtitleBlock(
+                            currentTimeline, 
+                            currentText,
+                            setting
+                        ));
                     }
-                    translatePromises = [];
+
+                    // 开始新的字幕块
+                    currentTimeline = line;
+                    currentText = [];
+                    continue;
+                }
+
+                // 收集文本内容
+                if (line && currentTimeline) {
+                    currentText.push(line);
+                }
+
+                // 处理批次翻译
+                if (batchPromises.length >= 5 || i === lines.length - 1) {
+                    const results = await Promise.all(batchPromises);
+                    processedLines.push(...results.flat());
+                    batchPromises = [];
                 }
             }
 
-            return result;
+            // 处理最后一个字幕块
+            if (currentTimeline && currentText.length > 0) {
+                batchPromises.push(this._processSubtitleBlock(
+                    currentTimeline, 
+                    currentText,
+                    setting
+                ));
+            }
+
+            // 处理剩余的翻译请求
+            if (batchPromises.length > 0) {
+                const results = await Promise.all(batchPromises);
+                processedLines.push(...results.flat());
+            }
+
+            return processedLines.join('\n');
         } catch (error) {
             console.error('VTT处理失败:', error);
             return body;
         }
     }
-}
 
-// 翻译模块
-async function translateBlock(timeline, text) {
-    try {
-        const cleanText = StringProcessor.cleanText(text);
-        if (!cleanText) return { timeline, text, translation: '' };
+    static async _processSubtitleBlock(timeline, textLines, setting) {
+        const result = [timeline];
 
-        const translation = await translateText(cleanText);
-        return { timeline, text, translation };
-    } catch {
-        return { timeline, text, translation: '' };
+        for (const line of textLines) {
+            // 跳过空行
+            if (!line) continue;
+
+            // 保持音乐标记和特殊行不变
+            if (CONFIG.REGEX.MUSIC.test(line) || 
+                CONFIG.REGEX.SPECIAL.test(line)) {
+                result.push(line);
+                continue;
+            }
+
+            // 添加原文
+            if (setting.line === 's') {
+                result.push(line);
+            }
+
+            // 翻译文本
+            try {
+                const translation = await this._translateText(line);
+                if (translation && translation !== line) {
+                    result.push(translation);
+                }
+            } catch (error) {
+                console.error('翻译失败:', error);
+            }
+
+            // 如果翻译在上，添加原文
+            if (setting.line !== 's') {
+                result.push(line);
+            }
+        }
+
+        result.push(''); // 添加空行分隔
+        return result;
+    }
+
+    static async _translateText(text) {
+        return new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(
+                () => reject(new Error('翻译超时')), 
+                CONFIG.DEFAULT_SETTINGS.Tubi.timeout
+            );
+
+            $task.fetch({
+                url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`,
+                method: "GET",
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            }).then(
+                response => {
+                    clearTimeout(timeoutId);
+                    try {
+                        const result = JSON.parse(response.body);
+                        resolve(result[0]?.[0]?.[0] || '');
+                    } catch {
+                        reject(new Error('解析失败'));
+                    }
+                },
+                error => {
+                    clearTimeout(timeoutId);
+                    reject(error);
+                }
+            );
+        });
     }
 }
 
-// 翻译函数
-async function translateText(text) {
-    return new Promise((resolve, reject) => {
-        const timeoutId = setTimeout(() => reject(new Error('翻译超时')), CONFIG.DEFAULT_SETTINGS.Tubi.timeout);
-
-        $task.fetch({
-            url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`,
-            method: "GET",
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
-            }
-        }).then(
-            response => {
-                clearTimeout(timeoutId);
-                try {
-                    const result = JSON.parse(response.body);
-                    resolve(result[0]?.[0]?.[0] || '');
-                } catch {
-                    reject(new Error('解析失败'));
-                }
-            },
-            error => {
-                clearTimeout(timeoutId);
-                reject(error);
-            }
-        );
-    });
-}
-
-// 处理VTT文件
+// 文件处理函数
 async function handleVTTFile(setting) {
     try {
         if (setting.type === "Disable") {
@@ -161,17 +181,15 @@ async function handleVTTFile(setting) {
             return;
         }
 
-        const result = await VTTProcessor.process($response.body, setting);
-
+        const result = await VTTHandler.process($response.body, setting);
+        
+        // 保持原有的 headers
         $done({ 
             body: result,
-            headers: {
-                ...$response.headers,
-                'Content-Type': 'text/vtt;charset=utf-8'
-            }
+            headers: $response.headers
         });
     } catch (error) {
-        console.error("处理失败:", error);
+        console.error("VTT处理失败:", error);
         $done({
             body: $response.body,
             headers: $response.headers
@@ -179,7 +197,6 @@ async function handleVTTFile(setting) {
     }
 }
 
-// 处理M3U8文件
 async function handleM3U8File(url, settings, service) {
     try {
         const body = $response.body;
@@ -202,14 +219,23 @@ async function handleM3U8File(url, settings, service) {
 async function main() {
     try {
         const url = $request.url;
-        const settings = JSON.parse($persistentStore.read("settings") || 
-            JSON.stringify(CONFIG.DEFAULT_SETTINGS));
+        let settings = {};
+        
+        try {
+            settings = JSON.parse($persistentStore.read("settings") || "{}");
+        } catch {
+            settings = CONFIG.DEFAULT_SETTINGS;
+        }
+
         const service = "Tubi";
+        if (!settings[service]) {
+            settings[service] = CONFIG.DEFAULT_SETTINGS[service];
+        }
         
         if (CONFIG.REGEX.M3U8.test(url)) {
             await handleM3U8File(url, settings, service);
         } else if (CONFIG.REGEX.VTT.test(url)) {
-            await handleVTTFile(settings[service] || CONFIG.DEFAULT_SETTINGS[service]);
+            await handleVTTFile(settings[service]);
         } else {
             $done({});
         }
