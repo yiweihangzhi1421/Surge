@@ -74,7 +74,10 @@ class TranslationService {
     static async _googleTranslate(text, sl, tl) {
         const options = {
             url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`,
-            method: "GET"
+            method: "GET",
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
+            }
         };
 
         return this._makeRequest(options);
@@ -84,8 +87,11 @@ class TranslationService {
         const options = {
             url: "https://api-free.deepl.com/v2/translate",
             method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: `auth_key=${dkey}&text=${encodeURIComponent(text)}&target_lang=${tl}`
+            headers: { 
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": `DeepL-Auth-Key ${dkey}`
+            },
+            body: `text=${encodeURIComponent(text)}&target_lang=${tl}`
         };
 
         return this._makeRequest(options, true);
@@ -124,7 +130,12 @@ class TranslationService {
 // VTT 处理类
 class VTTProcessor {
     constructor(body) {
-        this.body = body;
+        // 处理二进制数据
+        if (body instanceof Uint8Array) {
+            this.body = new TextDecoder('utf-8').decode(body);
+        } else {
+            this.body = body;
+        }
         this.subtitles = [];
     }
 
@@ -163,7 +174,7 @@ class VTTProcessor {
 
     static shouldTranslate(text) {
         if (!text || typeof text !== 'string') return false;
-        // 跳过音乐标记
+        // 跳过音乐标记和音效
         if (CONFIG.REGEX.MUSIC.test(text)) return false;
         // 跳过空行或只有特殊字符的行
         const cleaned = text.replace(/[♪()]/g, '').trim();
@@ -229,10 +240,10 @@ class VTTProcessor {
         let result = "WEBVTT\n\n";
         
         for (const subtitle of subtitles) {
-            // 时间码
+            if (!subtitle?.timeCode) continue;
+
             result += subtitle.timeCode + "\n";
             
-            // 处理字幕文本
             const originalTexts = subtitle.originalText || [];
             const translatedTexts = subtitle.translatedText || [];
             
@@ -260,7 +271,7 @@ class VTTProcessor {
     }
 }
 
-// 处理M3U8文件
+// M3U8文件处理函数
 async function handleM3U8File(url, settings, service) {
     try {
         const body = $response.body;
@@ -279,7 +290,7 @@ async function handleM3U8File(url, settings, service) {
     }
 }
 
-// 处理VTT文件
+// VTT文件处理函数
 async function handleVTTFile(setting) {
     try {
         if (setting.type === "Disable") {
@@ -287,19 +298,39 @@ async function handleVTTFile(setting) {
             return;
         }
 
-        const processor = new VTTProcessor($response.body);
+        let responseBody = $response.body;
+        
+        // 检查并处理二进制数据
+        const contentType = ($response.headers['Content-Type'] || '').toLowerCase();
+        if (contentType.includes('octet-stream')) {
+            if (responseBody instanceof Uint8Array) {
+                responseBody = new TextDecoder('utf-8').decode(responseBody);
+            }
+        }
+
+        const processor = new VTTProcessor(responseBody);
         const subtitles = processor.parse();
         const translatedSubtitles = await processor.translate(setting);
         const result = VTTProcessor.rebuild(translatedSubtitles, setting.line);
 
-        $done({ body: result });
+        // 返回结果时设置正确的 Content-Type
+        $done({ 
+            body: result,
+            headers: {
+                ...$response.headers,
+                'Content-Type': 'text/vtt;charset=utf-8'
+            }
+        });
     } catch (error) {
         console.error("VTT处理失败:", error);
-        $done({ body: $response.body });
+        $done({
+            body: $response.body,
+            headers: $response.headers
+        });
     }
 }
 
-// 主入口
+// 主函数
 async function main() {
     try {
         const url = $request.url;
@@ -323,4 +354,5 @@ async function main() {
     }
 }
 
+// 启动脚本
 main();
