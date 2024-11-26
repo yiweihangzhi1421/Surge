@@ -1,185 +1,230 @@
-let url = $request.url;
-
-// Surge 持久化存储函数
-function saveSetting(key, value) {
-    return $persistentStore.write(value, key);
-}
-
-function loadSetting(key) {
-    return $persistentStore.read(key) || null;
-}
-
-// 默认设置
-let default_settings = {
-    Tubi: {
-        type: "Google", // 翻译引擎：Google, DeepL, External, Disable
-        lang: "English",
-        sl: "auto", // 源语言
-        tl: "zh-CN", // 目标语言
-        line: "s", // "f" 翻译在上，"s" 原文在上
-        dkey: "null" // DeepL API 密钥
+// Configuration Constants
+const CONFIG = {
+    DEFAULT_SETTINGS: {
+        Tubi: {
+            type: "Google",
+            lang: "English",
+            sl: "auto",
+            tl: "zh-CN",
+            line: "s",
+            dkey: "null"
+        }
+    },
+    REGEX: {
+        M3U8: /\.m3u8/,
+        VTT: /\.vtt/,
+        TIMELINE: /\d{2}:\d{2}.\d{3} --> \d{2}:\d{2}.\d{3}/,
+        VTT_PATTERN: /#EXTINF:.+\n([^\n]+\.vtt)/
+    },
+    TRANSLATION_ENGINES: {
+        GOOGLE: "Google",
+        DEEPL: "DeepL",
+        DISABLE: "Disable"
     }
 };
 
-// 加载设置
-let settings = loadSetting("settings");
-if (!settings) {
-    settings = default_settings;
-    saveSetting("settings", JSON.stringify(settings));
-} else {
-    settings = JSON.parse(settings);
+// Storage Management
+class StorageManager {
+    static save(key, value) {
+        return $persistentStore.write(value, key);
+    }
+
+    static load(key) {
+        return $persistentStore.read(key) || null;
+    }
+
+    static initializeSettings() {
+        let settings = this.load("settings");
+        if (!settings) {
+            settings = CONFIG.DEFAULT_SETTINGS;
+            this.save("settings", JSON.stringify(settings));
+        } else {
+            settings = JSON.parse(settings);
+        }
+        return settings;
+    }
 }
 
-let service = "Tubi";
-if (!settings[service]) settings[service] = default_settings[service];
-let setting = settings[service];
+// VTT File Handler
+class VTTHandler {
+    constructor(body) {
+        this.body = body;
+        this.lines = body.split("\n");
+        this.timeline = [];
+        this.subtitles = [];
+    }
 
-// 处理 .m3u8 文件
-if (url.match(/\.m3u8/)) {
-    console.log("Processing .m3u8 file...");
+    parse() {
+        if (!this.body || this.body.trim() === "") {
+            throw new Error("Empty VTT content");
+        }
+
+        for (let i = 0; i < this.lines.length; i++) {
+            if (CONFIG.REGEX.TIMELINE.test(this.lines[i])) {
+                this.timeline.push(this.lines[i]);
+                this.subtitles.push(this.lines[i + 1]?.trim() || "");
+                i++;
+            }
+        }
+
+        if (this.timeline.length === 0 || this.subtitles.length === 0) {
+            throw new Error("Failed to parse VTT content");
+        }
+
+        return {
+            timeline: this.timeline,
+            subtitles: this.subtitles
+        };
+    }
+
+    static rebuild(timeline, original, translated, line) {
+        let result = "WEBVTT\n\n";
+        for (let i = 0; i < timeline.length; i++) {
+            result += `${timeline[i]}\n`;
+            if (line === "s") {
+                result += `${original[i]}\n${translated[i]}\n\n`;
+            } else if (line === "f") {
+                result += `${translated[i]}\n${original[i]}\n\n`;
+            }
+        }
+        return result;
+    }
+}
+
+// Translation Service
+class TranslationService {
+    static async translate(subtitles, engine, sl, tl, dkey) {
+        const translated = [];
+        
+        for (let i = 0; i < subtitles.length; i++) {
+            if (subtitles[i].trim() === "") {
+                translated.push("");
+                continue;
+            }
+
+            try {
+                const result = await this._translateText(subtitles[i], engine, sl, tl, dkey);
+                translated.push(result);
+            } catch (error) {
+                console.error(`Translation error for text "${subtitles[i]}":`, error);
+                translated.push(subtitles[i]);
+            }
+        }
+
+        return translated;
+    }
+
+    static async _translateText(text, engine, sl, tl, dkey) {
+        const options = this._getRequestOptions(text, engine, sl, tl, dkey);
+        const response = await this._sendRequest(options);
+        return this._parseResponse(response, engine);
+    }
+
+    static _getRequestOptions(text, engine, sl, tl, dkey) {
+        if (engine === CONFIG.TRANSLATION_ENGINES.GOOGLE) {
+            return {
+                url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`,
+                method: "GET"
+            };
+        } else if (engine === CONFIG.TRANSLATION_ENGINES.DEEPL) {
+            return {
+                url: "https://api-free.deepl.com/v2/translate",
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: `auth_key=${dkey}&text=${encodeURIComponent(text)}&target_lang=${tl}`
+            };
+        }
+        throw new Error(`Unsupported translation engine: ${engine}`);
+    }
+
+    static async _sendRequest(options) {
+        return new Promise((resolve, reject) => {
+            $task.fetch(options).then(
+                response => {
+                    try {
+                        resolve(JSON.parse(response.body));
+                    } catch (e) {
+                        reject(new Error(`Failed to parse response: ${e.message}`));
+                    }
+                },
+                error => reject(new Error(`Request failed: ${error}`))
+            );
+        });
+    }
+
+    static _parseResponse(response, engine) {
+        if (engine === CONFIG.TRANSLATION_ENGINES.GOOGLE) {
+            return response[0]?.[0]?.[0] || "";
+        } else if (engine === CONFIG.TRANSLATION_ENGINES.DEEPL) {
+            return response.translations?.[0]?.text || "";
+        }
+        throw new Error(`Unsupported translation engine: ${engine}`);
+    }
+}
+
+// Main Script Logic
+async function main() {
+    const url = $request.url;
+    const settings = StorageManager.initializeSettings();
+    const service = "Tubi";
     
-    let body = $response.body; // 获取 HTTP 响应的 body
-    console.log("Original .m3u8 Content:\n", body);
+    if (!settings[service]) {
+        settings[service] = CONFIG.DEFAULT_SETTINGS[service];
+    }
+    
+    const setting = settings[service];
 
-    // 匹配 .vtt 文件的 URL
-    let patt = /#EXTINF:.+\n([^\n]+\.vtt)/; // 匹配 .vtt 文件路径
-    let match = body.match(patt);
+    if (CONFIG.REGEX.M3U8.test(url)) {
+        handleM3U8File(url, settings, service);
+    } else if (CONFIG.REGEX.VTT.test(url)) {
+        await handleVTTFile(url, setting);
+    }
+}
 
-    if (match && match[1]) {
-        let subtitles_url = url.replace(/\/[^\/]+$/, `/${match[1]}`); // 拼接完整路径
-        console.log("Extracted subtitles URL:", subtitles_url);
-        settings[service].t_subtitles_url = subtitles_url;
-        saveSetting("settings", JSON.stringify(settings));
-    } else {
-        console.error("Failed to extract subtitles URL from .m3u8 file.");
+function handleM3U8File(url, settings, service) {
+    console.log("Processing .m3u8 file...");
+    const body = $response.body;
+    
+    const match = body.match(CONFIG.REGEX.VTT_PATTERN);
+    if (match?.[1]) {
+        const subtitlesUrl = url.replace(/\/[^\/]+$/, `/${match[1]}`);
+        settings[service].t_subtitles_url = subtitlesUrl;
+        StorageManager.save("settings", JSON.stringify(settings));
     }
 
     $done({ body });
 }
 
-// 处理 .vtt 文件
-if (url.match(/\.vtt/)) {
+async function handleVTTFile(url, setting) {
     console.log("Processing .vtt file...");
+    
+    if (setting.type === CONFIG.TRANSLATION_ENGINES.DISABLE) {
+        $done({ body: $response.body });
+        return;
+    }
 
-    if (setting.type === "Disable") {
-        console.log("Translation disabled, returning original subtitles.");
+    try {
+        const vttHandler = new VTTHandler($response.body);
+        const { timeline, subtitles } = vttHandler.parse();
+
+        const translated = await TranslationService.translate(
+            subtitles,
+            setting.type,
+            setting.sl,
+            setting.tl,
+            setting.dkey
+        );
+
+        const translatedBody = VTTHandler.rebuild(timeline, subtitles, translated, setting.line);
+        $done({ body: translatedBody });
+    } catch (error) {
+        console.error("Error processing VTT file:", error);
         $done({ body: $response.body });
     }
-
-    let body = $response.body; // 获取 HTTP 响应的 body
-    console.log("Original .vtt Content:\n", body);
-
-    if (!body || body.trim() === "") {
-        console.error("The .vtt file content is empty. Returning original response.");
-        $done({ body });
-    }
-
-    // 解析 WebVTT 文件
-    let lines = body.split("\n");
-    let timelineRegex = /\d{2}:\d{2}.\d{3} --> \d{2}:\d{2}.\d{3}/;
-    let timeline = [];
-    let subtitles = [];
-
-    for (let i = 0; i < lines.length; i++) {
-        if (timelineRegex.test(lines[i])) {
-            timeline.push(lines[i]); // 保存时间轴
-            subtitles.push(lines[i + 1]?.trim() || ""); // 保存字幕文本
-            i++; // 跳过字幕文本行
-        }
-    }
-
-    console.log("Parsed timeline:", timeline);
-    console.log("Parsed subtitles:", subtitles);
-
-    // 如果没有解析到内容，直接返回原始内容
-    if (timeline.length === 0 || subtitles.length === 0) {
-        console.error("Failed to parse .vtt file. Returning original content.");
-        $done({ body });
-    }
-
-    // 调用翻译服务
-    translateSubtitles(subtitles, setting.type, setting.sl, setting.tl).then(translated => {
-        console.log("Translated subtitles:", translated);
-
-        // 重建 WebVTT 文件
-        let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
-        console.log("Generated WEBVTT Content:\n", translatedBody);
-
-        $done({ body: translatedBody });
-    }).catch(err => {
-        console.error("Translation failed:", err);
-        $done({ body });
-    });
 }
 
-// 重建 WebVTT 文件
-function rebuildVTT(timeline, original, translated, line) {
-    let result = "WEBVTT\n\n";
-    for (let i = 0; i < timeline.length; i++) {
-        result += `${timeline[i]}\n`;
-        if (line === "s") {
-            result += `${original[i]}\n${translated[i]}\n\n`; // 原文在上，翻译在下
-        } else if (line === "f") {
-            result += `${translated[i]}\n${original[i]}\n\n`; // 翻译在上，原文在下
-        }
-    }
-    return result;
-}
-
-// 翻译字幕文本
-async function translateSubtitles(subtitles, engine, sl, tl) {
-    let translated = [];
-    if (engine === "Google") {
-        for (let i = 0; i < subtitles.length; i++) {
-            if (subtitles[i].trim() === "") {
-                translated.push(""); // 跳过空白字幕
-                continue;
-            }
-            let options = {
-                url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(subtitles[i])}`,
-                method: "GET"
-            };
-            try {
-                let response = await send_request(options);
-                translated.push(response[0]?.[0]?.[0] || subtitles[i]);
-            } catch (e) {
-                console.error("Translation error:", e);
-                translated.push(subtitles[i]);
-            }
-        }
-    } else if (engine === "DeepL") {
-        for (let i = 0; i < subtitles.length; i++) {
-            if (subtitles[i].trim() === "") {
-                translated.push(""); // 跳过空白字幕
-                continue;
-            }
-            let options = {
-                url: "https://api-free.deepl.com/v2/translate",
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: `auth_key=${setting.dkey}&text=${encodeURIComponent(subtitles[i])}&target_lang=${tl}`
-            };
-            try {
-                let response = await send_request(options);
-                translated.push(response.translations?.[0]?.text || subtitles[i]);
-            } catch (e) {
-                console.error("Translation error:", e);
-                translated.push(subtitles[i]);
-            }
-        }
-    }
-    return translated;
-}
-
-// HTTP 请求封装
-function send_request(options) {
-    return new Promise((resolve, reject) => {
-        $task.fetch(options).then(response => {
-            try {
-                resolve(JSON.parse(response.body));
-            } catch (e) {
-                reject(e);
-            }
-        }, reason => reject(reason));
-    });
-}
+// Start the script
+main().catch(error => {
+    console.error("Script execution failed:", error);
+    $done({});
+});
