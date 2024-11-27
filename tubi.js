@@ -22,93 +22,39 @@ const default_settings = {
     dkey: "null"        // DeepL API Key
 };
 
-// 读取设置
 let settings = $persistentStore.read('tubi_settings');
 if (!settings) {
     settings = default_settings;
     $persistentStore.write(JSON.stringify(settings), 'tubi_settings');
 } else {
     settings = JSON.parse(settings);
-    if (settings.translate_sound === undefined) {
-        settings.translate_sound = true;
-        $persistentStore.write(JSON.stringify(settings), 'tubi_settings');
-    }
 }
 
-// 处理翻译请求
-function handleTranslationRequest(text, callback, retryCount = 0) {
-    if (retryCount > 2) {
-        console.log(`翻译失败: ${text}`);
-        callback(null); // 超过重试次数
-        return;
-    }
-
+function batchTranslate(textArray, callback) {
+    const joinedText = textArray.join('\n');
     const options = {
         url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}`,
-        headers: {
-            'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)',
-        },
-        body: `q=${encodeURIComponent(text)}`,
+        headers: { 'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)' },
+        body: `q=${encodeURIComponent(joinedText)}`
     };
 
     $httpClient.post(options, (error, response, data) => {
-        if (error) {
-            console.log(`请求失败: ${error}`);
-            setTimeout(() => {
-                handleTranslationRequest(text, callback, retryCount + 1); // 重试
-            }, 500); // 延迟 500ms 重试
+        if (error || !data) {
+            console.log(`批量翻译失败: ${error}`);
+            callback(null);
             return;
         }
-
         try {
             const result = JSON.parse(data);
-            const translated = result.sentences.map((s) => s.trans).join(' ').trim();
-            callback(translated || null);
+            const translations = result.sentences.map((s) => s.trans.trim());
+            callback(translations);
         } catch (e) {
-            console.log(`解析失败: ${text}`);
-            setTimeout(() => {
-                handleTranslationRequest(text, callback, retryCount + 1); // 重试
-            }, 500); // 延迟 500ms 重试
+            console.log(`解析失败: ${e}`);
+            callback(null);
         }
     });
 }
 
-// 处理单个字幕块
-function processBlock(block, index, translatedBlocks, finishIfDone) {
-    const lines = block.split('\n');
-    const timing = lines.find((line) => line.includes(' --> '));
-
-    if (!timing) {
-        translatedBlocks[index] = block;
-        finishIfDone();
-        return;
-    }
-
-    const dialogueLines = lines.slice(lines.indexOf(timing) + 1);
-    const dialogue = dialogueLines.join(' ').trim();
-    const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(dialogue);
-
-    const textToTranslate = isSoundEffect
-        ? dialogue.replace(/[\[\(\)\]]/g, '').trim()
-        : dialogue;
-
-    handleTranslationRequest(textToTranslate, (translated) => {
-        if (translated) {
-            let newBlock = `${timing}\n${dialogue}`;
-            if (isSoundEffect) {
-                newBlock += `\n(${translated})`;
-            } else {
-                newBlock += `\n${translated}`;
-            }
-            translatedBlocks[index] = newBlock;
-        } else {
-            translatedBlocks[index] = block; // 保留原始内容
-        }
-        finishIfDone();
-    });
-}
-
-// 处理字幕文件
 function processSubtitles(body) {
     if (settings.type === "Disable" || !body) {
         $done({});
@@ -118,22 +64,29 @@ function processSubtitles(body) {
     const header = "WEBVTT\n\n";
     body = body.replace(/^WEBVTT\n/, '');
     const subtitleBlocks = body.split('\n\n').filter((block) => block.trim());
-    const translatedBlocks = new Array(subtitleBlocks.length);
-    let pendingTranslations = subtitleBlocks.length;
+    const timings = subtitleBlocks.map((block) => block.split('\n')[0]);
+    const texts = subtitleBlocks.map((block) => {
+        const lines = block.split('\n').slice(1);
+        return lines.join(' ').trim();
+    });
 
-    const finishIfDone = () => {
-        pendingTranslations--;
-        if (pendingTranslations <= 0) {
-            $done({ body: header + translatedBlocks.join('\n\n') });
+    batchTranslate(texts, (translatedTexts) => {
+        if (!translatedTexts) {
+            $done({ body: header + body });
+            return;
         }
-    };
 
-    subtitleBlocks.forEach((block, index) => {
-        processBlock(block, index, translatedBlocks, finishIfDone);
+        const translatedBlocks = subtitleBlocks.map((block, index) => {
+            const timing = timings[index];
+            const original = texts[index];
+            const translated = translatedTexts[index] || original;
+            return `${timing}\n${original}\n${translated}`;
+        });
+
+        $done({ body: header + translatedBlocks.join('\n\n') });
     });
 }
 
-// 主逻辑
 if (url.includes('.vtt')) {
     processSubtitles($response.body);
 } else if (url.includes('.m3u8')) {
