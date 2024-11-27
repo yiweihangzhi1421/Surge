@@ -37,12 +37,11 @@ let setting = settings[service];
 
 // 翻译函数
 async function translate(text, retryCount = 3) {
+    if (!text || text.trim() === "") {
+        return "";
+    }
+    
     return new Promise((resolve) => {
-        if (!text || !text.trim()) {
-            resolve("");
-            return;
-        }
-
         const doTranslate = () => {
             let url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=" + encodeURIComponent(text);
             
@@ -61,10 +60,13 @@ async function translate(text, retryCount = 3) {
                     try {
                         let result = JSON.parse(data);
                         if (result && result[0] && result[0][0] && result[0][0][0]) {
-                            resolve(result[0][0][0]);
-                        } else {
-                            resolve(text);
+                            let translated = result[0][0][0].trim();
+                            if (translated) {
+                                resolve(translated);
+                                return;
+                            }
                         }
+                        resolve(text);
                     } catch (e) {
                         console.log('解析错误:', e);
                         resolve(text);
@@ -101,19 +103,23 @@ async function translateBatch(subtitles, startIndex, batchSize) {
     
     for (let i = 0; i < batch.length; i++) {
         let text = batch[i];
-        if (!text) continue;
+        if (!text || text.trim() === "") {
+            translations.push("");
+            continue;
+        }
         
         let globalIndex = startIndex + i;
         try {
             let translated = await translate(text);
-            console.log(`[${globalIndex + 1}/${subtitles.length}] 原文: "${text}"`);
+            console.log(`[${globalIndex + 1}/${subtitles.length}]`);
+            console.log(`原文: "${text}"`);
             console.log(`译文: "${translated}"`);
             translations.push(translated);
         } catch (e) {
             console.log(`翻译错误 [${globalIndex + 1}]:`, e);
             translations.push(text);
         }
-        await new Promise(resolve => setTimeout(resolve, 200)); // 增加延迟到200ms
+        await new Promise(resolve => setTimeout(resolve, 200));
     }
     
     return translations;
@@ -135,9 +141,11 @@ function processRequest() {
         }
         
         $done({ body });
+        return;
     }
+    
     // 处理 vtt 文件
-    else if (url.match(/\.vtt/)) {
+    if (url.match(/\.vtt/)) {
         console.log("处理 VTT 文件");
         
         if (setting.type === "Disable" || !body || body.trim() === "") {
@@ -174,19 +182,25 @@ function processRequest() {
         console.log("找到字幕数:", subtitles.length);
         
         if (timeline.length > 0 && subtitles.length > 0) {
-            const BATCH_SIZE = 10; // 减小批量大小
+            const BATCH_SIZE = 10;
             const totalBatches = Math.ceil(subtitles.length / BATCH_SIZE);
             let translatedTexts = [];
             
             async function processBatches(batchIndex = 0) {
                 if (batchIndex >= totalBatches) {
-                    // 所有批次处理完成，重建字幕文件
                     let result = "WEBVTT\n\n";
                     for (let i = 0; i < timeline.length; i++) {
+                        result += timeline[i] + "\n";
                         if (translatedTexts[i]) {
-                            result += timeline[i] + "\n";
-                            result += subtitles[i] + "\n";
-                            result += translatedTexts[i] + "\n\n";
+                            if (setting.line === "s") {
+                                result += subtitles[i] + "\n";
+                                result += translatedTexts[i] + "\n\n";
+                            } else {
+                                result += translatedTexts[i] + "\n";
+                                result += subtitles[i] + "\n\n";
+                            }
+                        } else {
+                            result += subtitles[i] + "\n\n";
                         }
                     }
                     
@@ -203,10 +217,9 @@ function processRequest() {
                 const translations = await translateBatch(subtitles, startIndex, BATCH_SIZE);
                 translatedTexts = translatedTexts.concat(translations);
                 
-                // 处理下一批
                 setTimeout(() => {
                     processBatches(batchIndex + 1);
-                }, 1000); // 增加批次间延迟到1秒
+                }, 1000);
             }
             
             // 开始处理第一批
@@ -214,11 +227,11 @@ function processRequest() {
         } else {
             $done({ body });
         }
+        return;
     }
+    
     // 其他文件类型
-    else {
-        $done({});
-    }
+    $done({});
 }
 
 // 启动处理
