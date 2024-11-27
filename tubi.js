@@ -1,10 +1,8 @@
 /*
     Dualsub for Tubi (Surge) - 简化版
 */
-
 const url = $request.url;
 const headers = $request.headers;
-
 const default_settings = {
     type: "Google",     
     sl: "auto",         
@@ -26,28 +24,34 @@ function batchTranslate(texts) {
             resolve([]);
             return;
         }
-
+        
         // 将所有文本拼接起来，用特殊分隔符分隔
-        const combinedText = texts.join('\n###\n');
+        const combinedText = texts.join('\n@@@\n');
         
         const options = {
-            url: `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}&q=${encodeURIComponent(combinedText)}`,
+            url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
             headers: {
-                'User-Agent': 'Mozilla/5.0'
-            }
+                'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: `q=${encodeURIComponent(combinedText)}`
         };
 
-        $httpClient.get(options, function(error, response, data) {
+        $httpClient.post(options, function(error, response, data) {
             if (error) {
                 resolve(new Array(texts.length).fill(''));
                 return;
             }
             try {
-                const parsed = JSON.parse(data);
-                const translated = parsed[0].map(item => item[0]).join('');
-                // 按分隔符分割回数组
-                const results = translated.split('###').map(t => t.trim());
-                resolve(results);
+                const result = JSON.parse(data);
+                if (result.sentences) {
+                    const translated = result.sentences.map(s => s.trans).join('');
+                    // 按分隔符分割回数组
+                    const results = translated.split('@@@').map(t => t.trim());
+                    resolve(results);
+                } else {
+                    resolve(new Array(texts.length).fill(''));
+                }
             } catch (e) {
                 resolve(new Array(texts.length).fill(''));
             }
@@ -79,18 +83,26 @@ async function processSubtitles(body) {
             return;
         }
 
-        const text = lines.slice(lines.indexOf(timing) + 1).join(' ').trim();
+        const textLines = lines.slice(lines.indexOf(timing) + 1);
+        const text = textLines.join('\n').trim(); // 保持原始换行格式
         timings.push(timing);
         textsToTranslate.push(text);
     });
 
-    // 批量翻译
-    const translations = await batchTranslate(textsToTranslate);
+    // 分批翻译，每批20个字幕
+    const batchSize = 20;
+    const translatedTexts = [];
+    
+    for (let i = 0; i < textsToTranslate.length; i += batchSize) {
+        const batch = textsToTranslate.slice(i, i + batchSize);
+        const translations = await batchTranslate(batch);
+        translatedTexts.push(...translations);
+    }
 
     // 重建字幕块
     for (let i = 0; i < textsToTranslate.length; i++) {
-        if (translations[i]) {
-            processedBlocks.push(`${timings[i]}\n${textsToTranslate[i]}\n${translations[i]}`);
+        if (translatedTexts[i]) {
+            processedBlocks.push(`${timings[i]}\n${textsToTranslate[i]}\n${translatedTexts[i]}`);
         } else {
             processedBlocks.push(`${timings[i]}\n${textsToTranslate[i]}`);
         }
