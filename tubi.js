@@ -1,6 +1,7 @@
 let url = $request.url;
+let body = $response.body;
 
-// 存储函数
+// 存储功能
 function saveSetting(key, value) {
     return $persistentStore.write(value, key);
 }
@@ -34,42 +35,48 @@ let service = "Tubi";
 if (!settings[service]) settings[service] = default_settings[service];
 let setting = settings[service];
 
-// 构建翻译URL
-function buildGoogleTranslateUrl(text, sl, tl) {
-    // 使用 translate.google.cn 或其他可用的镜像
-    let baseUrl = "https://translate.googleapis.com/translate_a/single";
-    let params = new URLSearchParams({
-        client: "gtx",
-        sl: sl,
-        tl: tl,
-        dt: "t",
-        dj: "1",  // 使用更稳定的 JSON 响应格式
-        q: text
-    });
-    return baseUrl + "?" + params.toString();
-}
-
-// 重建 WebVTT 文件
-function rebuildVTT(timeline, original, translated, line) {
-    let result = "WEBVTT\n\n";
-    console.log("Rebuilding VTT with line order:", line);
-
-    for (let i = 0; i < timeline.length; i++) {
-        result += timeline[i] + "\n";
-        if (line === "s") {
-            result += original[i] + "\n" + translated[i] + "\n\n";
-        } else if (line === "f") {
-            result += translated[i] + "\n" + original[i] + "\n\n";
+// 翻译函数
+function translate(text) {
+    return new Promise((resolve) => {
+        if (!text.trim()) {
+            resolve("");
+            return;
         }
-    }
-    return result;
+        
+        let url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=" + encodeURIComponent(text);
+        
+        $httpClient.get({
+            url: url,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7'
+            }
+        }, function(error, response, data) {
+            if (error) {
+                console.log('Translation error:', error);
+                resolve(text);
+                return;
+            }
+            
+            try {
+                let result = JSON.parse(data);
+                if (result && result[0] && result[0][0] && result[0][0][0]) {
+                    resolve(result[0][0][0]);
+                } else {
+                    resolve(text);
+                }
+            } catch (e) {
+                console.log('Parse error:', e);
+                resolve(text);
+            }
+        });
+    });
 }
 
 // 处理 m3u8 文件
 if (url.match(/\.m3u8/)) {
-    let body = $response.body;
     console.log("Processing m3u8 file");
-    
     let patt = /#EXTINF:.+\n([^\n]+\.vtt)/;
     let match = body.match(patt);
     
@@ -85,12 +92,11 @@ if (url.match(/\.m3u8/)) {
 
 // 处理 vtt 文件
 else if (url.match(/\.vtt/)) {
-    let body = $response.body;
     console.log("Processing VTT file");
-    console.log("Current settings:", JSON.stringify(setting));
     
     if (setting.type === "Disable" || !body || body.trim() === "") {
         $done({ body });
+        return;
     }
     
     let lines = body.split("\n");
@@ -98,6 +104,7 @@ else if (url.match(/\.vtt/)) {
     let timeline = [];
     let subtitles = [];
     
+    // 提取时间轴和字幕
     for (let i = 0; i < lines.length; i++) {
         if (timelineRegex.test(lines[i])) {
             timeline.push(lines[i]);
@@ -106,72 +113,38 @@ else if (url.match(/\.vtt/)) {
         }
     }
     
-    console.log("Found subtitles:", subtitles.length);
+    console.log("Found", subtitles.length, "subtitles");
     
     if (timeline.length > 0 && subtitles.length > 0) {
-        // 创建所有翻译请求的Promise数组
-        let promises = subtitles.map(function(text, index) {
-            return new Promise(function(resolve) {
-                if (!text.trim()) {
-                    resolve("");
-                    return;
-                }
-                
-                // 添加延迟以避免请求过于密集
-                setTimeout(function() {
-                    let translateUrl = buildGoogleTranslateUrl(text, setting.sl, setting.tl);
-                    console.log(`\nTranslating [${index + 1}/${subtitles.length}]: "${text}"`);
-                    console.log(`Translation URL: ${translateUrl}\n`);
-                    
-                    $httpClient.get({
-                        url: translateUrl,
-                        headers: {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                            'Accept': 'application/json, text/javascript, */*; q=0.01',
-                            'Accept-Encoding': 'gzip, deflate, br',
-                            'Connection': 'keep-alive',  // 强制使用 HTTP/1.1
-                            'X-QUIC-Version': '0'  // 禁用 QUIC
-                        },
-                        'use-http2': false  // 强制使用 HTTP/1.1
-                    }, function(error, response, data) {
-                        if (error) {
-                            console.error("Translation request failed:", error);
-                            resolve(text);
-                            return;
-                        }
-                        
-                        try {
-                            let result = JSON.parse(data);
-                            if (result && result[0]) {
-                                let translatedText = "";
-                                for (let j = 0; j < result[0].length; j++) {
-                                    if (result[0][j][0]) {
-                                        translatedText += result[0][j][0];
-                                    }
-                                }
-                                console.log(`[${index + 1}/${subtitles.length}] Translated: "${translatedText}"`);
-                                resolve(translatedText || text);
-                            } else {
-                                console.log(`[${index + 1}/${subtitles.length}] No translation result, keeping original`);
-                                resolve(text);
-                            }
-                        } catch (e) {
-                            console.error(`[${index + 1}/${subtitles.length}] Failed to parse translation response:`, e);
-                            resolve(text);
-                        }
+        // 批量翻译
+        let promises = subtitles.map((text, index) => {
+            // 添加延迟以避免请求过于密集
+            return new Promise(resolve => {
+                setTimeout(() => {
+                    translate(text).then(translated => {
+                        console.log(`[${index + 1}/${subtitles.length}] Original: "${text}" => "${translated}"`);
+                        resolve(translated);
                     });
-                }, index * 100); // 每个请求间隔100毫秒
+                }, index * 300); // 每300ms发送一个请求
             });
         });
         
-        // 等待所有翻译完成
-        Promise.all(promises).then(function(translatedTexts) {
-            let translatedBody = rebuildVTT(timeline, subtitles, translatedTexts, setting.line);
-            console.log("Translation completed, rebuilt VTT file");
-            $done({ body: translatedBody });
+        Promise.all(promises).then(translatedTexts => {
+            let result = "WEBVTT\n\n";
+            
+            // 重建字幕文件
+            for (let i = 0; i < timeline.length; i++) {
+                result += timeline[i] + "\n";
+                if (setting.line === "s") {
+                    result += subtitles[i] + "\n" + translatedTexts[i] + "\n\n";
+                } else {
+                    result += translatedTexts[i] + "\n" + subtitles[i] + "\n\n";
+                }
+            }
+            
+            $done({ body: result });
         });
     } else {
-        console.log("No subtitles found in VTT file");
         $done({ body });
     }
 }
