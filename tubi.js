@@ -36,15 +36,17 @@ let setting = settings[service];
 
 // 构建翻译URL
 function buildGoogleTranslateUrl(text, sl, tl) {
+    // 使用 translate.google.cn 或其他可用的镜像
     let baseUrl = "https://translate.googleapis.com/translate_a/single";
-    let params = [
-        "client=gtx",
-        "sl=" + encodeURIComponent(sl),
-        "tl=" + encodeURIComponent(tl),
-        "dt=t",
-        "q=" + encodeURIComponent(text)
-    ].join("&");
-    return baseUrl + "?" + params;
+    let params = new URLSearchParams({
+        client: "gtx",
+        sl: sl,
+        tl: tl,
+        dt: "t",
+        dj: "1",  // 使用更稳定的 JSON 响应格式
+        q: text
+    });
+    return baseUrl + "?" + params.toString();
 }
 
 // 重建 WebVTT 文件
@@ -125,8 +127,12 @@ else if (url.match(/\.vtt/)) {
                         url: translateUrl,
                         headers: {
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                            'Accept': 'application/json, text/javascript, */*; q=0.01'
-                        }
+                            'Accept': 'application/json, text/javascript, */*; q=0.01',
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'Connection': 'keep-alive',  // 强制使用 HTTP/1.1
+                            'X-QUIC-Version': '0'  // 禁用 QUIC
+                        },
+                        'use-http2': false  // 强制使用 HTTP/1.1
                     }, function(error, response, data) {
                         if (error) {
                             console.error("Translation request failed:", error);
