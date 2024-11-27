@@ -37,15 +37,16 @@ let service = "Tubi";
 if (!settings[service]) settings[service] = default_settings[service];
 let setting = settings[service];
 
-// 处理特殊字幕内容
-function processSubtitleText(text) {
-    if (text.match(/^\[.*\]$/) || text.includes("♪")) {
-        return text; // 如果是音效描述或音乐标记，保持原样
-    }
-    text = text.trim();
-    if (text === "") return "";
-    return text;
-}
+// 预定义常见翻译
+const commonTranslations = {
+    "Gossip Girl": "绯闻女孩",
+    "XOXO": "XOXO",
+    "Upper East Side": "上东区",
+    "Upper East Siders": "上东区人",
+    "Manhattan": "曼哈顿",
+    "Oh, my God": "噢，天啊",
+    "Thanksgiving": "感恩节"
+};
 
 // 翻译函数
 async function translate(text) {
@@ -55,10 +56,11 @@ async function translate(text) {
             return;
         }
 
-        // 检查是否是音效描述或音乐标记
-        if (text.match(/^\[.*\]$/) || text.includes("♪")) {
-            resolve(text);
-            return;
+        // 检查预定义翻译
+        for (const [key, value] of Object.entries(commonTranslations)) {
+            if (text.includes(key)) {
+                text = text.replace(key, value);
+            }
         }
 
         const url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=" + encodeURIComponent(text);
@@ -70,7 +72,7 @@ async function translate(text) {
                 'Accept': '*/*',
                 'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7'
             },
-            timeout: 1000  // 设置1秒超时
+            timeout: 1000
         }, function(error, response, data) {
             if (error) {
                 console.log('翻译错误:', error);
@@ -80,7 +82,7 @@ async function translate(text) {
 
             try {
                 let result = JSON.parse(data);
-                if (result?.[0]?.[0]?.[0]) {
+                if (result && result[0] && result[0][0] && result[0][0][0]) {
                     let translated = result[0][0][0].trim();
                     resolve(translated || text);
                 } else {
@@ -134,48 +136,44 @@ async function processRequest() {
             // 解析VTT文件
             const lines = body.split("\n");
             let output = "WEBVTT\n\n";
-            let currentBlock = {
-                timing: "",
-                text: []
-            };
+            let currentTime = "";
+            let currentText = [];
 
-            for (const line of lines) {
-                const trimmedLine = line.trim();
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
                 
-                if (!trimmedLine || trimmedLine === "WEBVTT") continue;
+                if (!line || line === "WEBVTT") continue;
                 
-                if (trimmedLine.match(/^\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}\.\d{3}/)) {
+                if (line.match(/^\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}\.\d{3}/)) {
                     // 处理前一个字幕块
-                    if (currentBlock.timing && currentBlock.text.length > 0) {
-                        const text = currentBlock.text.join("\n");
+                    if (currentTime && currentText.length > 0) {
+                        const text = currentText.join(" ");
                         if (text.includes("♪") || text.match(/^\[.*\]$/)) {
                             // 音乐或音效，保持原样
-                            output += currentBlock.timing + "\n" + text + "\n\n";
+                            output += currentTime + "\n" + text + "\n\n";
                         } else {
                             // 普通文本，进行翻译
                             const translation = await translate(text);
-                            output += currentBlock.timing + "\n" + text + "\n" + translation + "\n\n";
+                            output += currentTime + "\n" + text + "\n" + translation + "\n\n";
                         }
                     }
                     
                     // 开始新的字幕块
-                    currentBlock = {
-                        timing: trimmedLine,
-                        text: []
-                    };
-                } else if (trimmedLine) {
-                    currentBlock.text.push(trimmedLine);
+                    currentTime = line;
+                    currentText = [];
+                } else if (line) {
+                    currentText.push(line);
                 }
             }
             
             // 处理最后一个字幕块
-            if (currentBlock.timing && currentBlock.text.length > 0) {
-                const text = currentBlock.text.join("\n");
+            if (currentTime && currentText.length > 0) {
+                const text = currentText.join(" ");
                 if (text.includes("♪") || text.match(/^\[.*\]$/)) {
-                    output += currentBlock.timing + "\n" + text + "\n\n";
+                    output += currentTime + "\n" + text + "\n\n";
                 } else {
                     const translation = await translate(text);
-                    output += currentBlock.timing + "\n" + text + "\n" + translation + "\n\n";
+                    output += currentTime + "\n" + text + "\n" + translation + "\n\n";
                 }
             }
 
