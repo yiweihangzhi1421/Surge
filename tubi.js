@@ -83,132 +83,136 @@ async function translateBatch(subtitles, startIndex, batchSize) {
     
     for (let i = 0; i < batch.length; i++) {
         const text = batch[i];
-        const globalIndex = startIndex + i;
+        if (!text) continue;
         
+        const globalIndex = startIndex + i;
         try {
             const translated = await translate(text);
-            translations.push(translated);
             console.log(`[${globalIndex + 1}/${subtitles.length}] "${text}" => "${translated}"`);
+            translations.push(translated);
         } catch (e) {
             console.log(`翻译错误 [${globalIndex + 1}]:`, e);
             translations.push(text);
         }
-        // 增加延迟以避免请求过快
         await new Promise(resolve => setTimeout(resolve, 300));
     }
     
     return translations;
 }
 
-let isProcessing = false;
-
 // 处理主流程
 async function processRequest() {
-    if (isProcessing) {
-        console.log("已有处理进程在运行，跳过当前请求");
-        $done({});
+    // 处理 m3u8 文件
+    if (url.match(/\.m3u8/)) {
+        console.log("处理 m3u8 文件");
+        const patt = /#EXTINF:.+\n([^\n]+\.vtt)/;
+        const match = body.match(patt);
+        
+        if (match && match[1]) {
+            const subtitles_url = url.replace(/\/[^\/]+$/, "/" + match[1]);
+            console.log("找到字幕 URL:", subtitles_url);
+            settings[service].t_subtitles_url = subtitles_url;
+            saveSetting("settings", JSON.stringify(settings));
+        }
+        
+        $done({ body });
         return;
     }
     
-    isProcessing = true;
-    
-    try {
-        // 处理 m3u8 文件
-        if (url.match(/\.m3u8/)) {
-            console.log("处理 m3u8 文件");
-            const patt = /#EXTINF:.+\n([^\n]+\.vtt)/;
-            const match = body.match(patt);
-            
-            if (match && match[1]) {
-                const subtitles_url = url.replace(/\/[^\/]+$/, "/" + match[1]);
-                console.log("找到字幕 URL:", subtitles_url);
-                settings[service].t_subtitles_url = subtitles_url;
-                saveSetting("settings", JSON.stringify(settings));
-            }
-            
+    // 处理 vtt 文件
+    if (url.match(/\.vtt/)) {
+        console.log("处理 VTT 文件");
+        
+        if (setting.type === "Disable" || !body || body.trim() === "") {
             $done({ body });
             return;
         }
 
-        // 处理 vtt 文件
-        if (url.match(/\.vtt/)) {
-            console.log("处理 VTT 文件");
+        // 解析VTT文件
+        const lines = body.split("\n");
+        let subtitles = [];
+        let currentSubtitle = null;
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
             
-            if (setting.type === "Disable" || !body || body.trim() === "") {
-                $done({ body });
-                return;
-            }
-
-            const lines = body.split("\n");
-            const timelineRegex = /^\d{2}:\d{2}[:.]\d{3}\s*-->\s*\d{2}:\d{2}[:.]\d{3}/;
-            const subtitleItems = [];
-            let currentItem = null;
-
-            // 优化的字幕提取逻辑
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i].trim();
-                
-                if (timelineRegex.test(line)) {
-                    if (currentItem) {
-                        subtitleItems.push(currentItem);
-                    }
-                    currentItem = {
-                        timeline: line,
-                        text: []
-                    };
-                } else if (currentItem && line && !line.startsWith("WEBVTT")) {
-                    currentItem.text.push(line);
+            // 跳过空行和WEBVTT标记
+            if (!line || line === "WEBVTT") continue;
+            
+            // 检查是否是时间轴行
+            if (line.match(/\d{2}:\d{2}[.:]\d{3}\s*-->\s*\d{2}:\d{2}[.:]\d{3}/)) {
+                if (currentSubtitle) {
+                    subtitles.push(currentSubtitle);
+                }
+                currentSubtitle = {
+                    time: line,
+                    text: "",
+                    translated: ""
+                };
+            } 
+            // 如果有字幕文本且不是时间轴，则添加到当前字幕
+            else if (currentSubtitle) {
+                if (currentSubtitle.text) {
+                    currentSubtitle.text += " " + line;
+                } else {
+                    currentSubtitle.text = line;
                 }
             }
-            
-            if (currentItem) {
-                subtitleItems.push(currentItem);
-            }
+        }
+        
+        // 添加最后一个字幕
+        if (currentSubtitle) {
+            subtitles.push(currentSubtitle);
+        }
 
-            if (subtitleItems.length === 0) {
-                $done({ body });
-                return;
-            }
+        console.log("找到字幕数:", subtitles.length);
 
-            console.log(`找到字幕数: ${subtitleItems.length}`);
-
-            const BATCH_SIZE = 5;  // 减小批量大小
-            const subtitles = subtitleItems.map(item => item.text.join(" "));
-            const totalBatches = Math.ceil(subtitles.length / BATCH_SIZE);
-            let translatedTexts = [];
-
-            for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-                console.log(`处理批次 ${batchIndex + 1}/${totalBatches}`);
-                const startIndex = batchIndex * BATCH_SIZE;
-                const translations = await translateBatch(subtitles, startIndex, BATCH_SIZE);
-                translatedTexts = translatedTexts.concat(translations);
-            }
-
-            // 重建字幕文件
-            let result = "WEBVTT\n\n";
-            for (let i = 0; i < subtitleItems.length; i++) {
-                const item = subtitleItems[i];
-                const translatedText = translatedTexts[i];
-                
-                result += item.timeline + "\n";
-                result += item.text.join("\n") + "\n";
-                if (translatedText) {
-                    result += translatedText + "\n";
-                }
-                result += "\n";
-            }
-
-            console.log("字幕重建完成");
-            $done({ body: result });
+        if (subtitles.length === 0) {
+            $done({ body });
             return;
         }
 
-        // 其他文件类型
-        $done({});
+        // 分批翻译
+        const BATCH_SIZE = 5;
+        const textsToTranslate = subtitles.map(s => s.text);
+        const totalBatches = Math.ceil(textsToTranslate.length / BATCH_SIZE);
         
-    } finally {
-        isProcessing = false;
+        for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+            console.log(`处理批次 ${batchIndex + 1}/${totalBatches}`);
+            const startIndex = batchIndex * BATCH_SIZE;
+            const translations = await translateBatch(textsToTranslate, startIndex, BATCH_SIZE);
+            
+            // 将翻译结果添加到字幕对象中
+            for (let i = 0; i < translations.length; i++) {
+                const index = startIndex + i;
+                if (index < subtitles.length) {
+                    subtitles[index].translated = translations[i];
+                }
+            }
+        }
+
+        // 重建VTT文件
+        let result = "WEBVTT\n\n";
+        subtitles.forEach(subtitle => {
+            if (subtitle.time && subtitle.text) {
+                result += subtitle.time + "\n";
+                result += subtitle.text + "\n";
+                if (subtitle.translated) {
+                    result += subtitle.translated + "\n";
+                }
+                result += "\n";
+            }
+        });
+
+        console.log("字幕重建完成");
+        console.log("总字幕条数:", subtitles.length);
+        
+        $done({ body: result });
+        return;
     }
+    
+    // 其他文件类型
+    $done({});
 }
 
 // 启动处理
