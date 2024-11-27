@@ -32,9 +32,9 @@ if (!settings) {
 
 let requestQueue = [];
 let isProcessing = false;
-const maxConcurrentRequests = 1; // 并发限制
-const delayBetweenRequests = 500; // 请求间隔
-const timeoutLimit = 10000; // 单字幕块处理超时（10秒）
+const maxConcurrentRequests = 1;
+const delayBetweenRequests = 500;
+const timeoutLimit = 10000;
 
 function addToQueue(task) {
     requestQueue.push(task);
@@ -61,7 +61,7 @@ function processQueue() {
 function handleTranslationRequest(text, callback) {
     addToQueue((done) => {
         if (!text || text.match(/^[\s.,!?♪]+$/)) {
-            console.log(`跳过翻译无意义内容: ${text}`);
+            console.log(`跳过无意义翻译: ${text}`);
             callback(null);
             done();
             return;
@@ -80,8 +80,13 @@ function handleTranslationRequest(text, callback) {
             } else {
                 try {
                     const result = JSON.parse(data);
-                    const translations = result.sentences.map((s) => s.trans.trim());
-                    callback(translations.join(' '));
+                    if (result && result.sentences) {
+                        const translations = result.sentences.map((s) => s.trans.trim());
+                        callback(translations.join(' '));
+                    } else {
+                        console.log(`翻译结果缺失字段: ${text}, 返回数据: ${data}`);
+                        callback(null);
+                    }
                 } catch (e) {
                     console.log(`翻译结果解析失败: ${text}, 返回数据: ${data}`);
                     callback(null);
