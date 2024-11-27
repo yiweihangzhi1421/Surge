@@ -72,6 +72,30 @@ function translate(text) {
     });
 }
 
+// 分批翻译
+async function translateBatch(subtitles, startIndex, batchSize) {
+    let endIndex = Math.min(startIndex + batchSize, subtitles.length);
+    let batch = subtitles.slice(startIndex, endIndex);
+    let translations = [];
+    
+    for (let i = 0; i < batch.length; i++) {
+        let text = batch[i];
+        let globalIndex = startIndex + i;
+        try {
+            let translated = await translate(text);
+            console.log(`[${globalIndex + 1}/${subtitles.length}] Original: "${text}" => "${translated}"`);
+            translations.push(translated);
+        } catch (e) {
+            console.log(`Error translating [${globalIndex + 1}]:`, e);
+            translations.push(text);
+        }
+        // 添加100ms延迟
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    return translations;
+}
+
 // 处理主流程
 function processRequest() {
     // 处理 m3u8 文件
@@ -113,34 +137,39 @@ function processRequest() {
             console.log("Found", subtitles.length, "subtitles");
             
             if (timeline.length > 0 && subtitles.length > 0) {
-                // 批量翻译
-                let promises = subtitles.map((text, index) => {
-                    // 添加延迟以避免请求过于密集
-                    return new Promise(resolve => {
-                        setTimeout(() => {
-                            translate(text).then(translated => {
-                                console.log(`[${index + 1}/${subtitles.length}] Original: "${text}" => "${translated}"`);
-                                resolve(translated);
-                            });
-                        }, index * 300); // 每300ms发送一个请求
-                    });
-                });
+                const BATCH_SIZE = 20; // 每批处理20条字幕
+                const totalBatches = Math.ceil(subtitles.length / BATCH_SIZE);
+                let translatedTexts = [];
                 
-                Promise.all(promises).then(translatedTexts => {
-                    let result = "WEBVTT\n\n";
-                    
-                    // 重建字幕文件
-                    for (let i = 0; i < timeline.length; i++) {
-                        result += timeline[i] + "\n";
-                        if (setting.line === "s") {
-                            result += subtitles[i] + "\n" + translatedTexts[i] + "\n\n";
-                        } else {
-                            result += translatedTexts[i] + "\n" + subtitles[i] + "\n\n";
+                async function processBatches(batchIndex = 0) {
+                    if (batchIndex >= totalBatches) {
+                        // 所有批次处理完成，重建字幕文件
+                        let result = "WEBVTT\n\n";
+                        for (let i = 0; i < timeline.length; i++) {
+                            result += timeline[i] + "\n";
+                            if (setting.line === "s") {
+                                result += subtitles[i] + "\n" + translatedTexts[i] + "\n\n";
+                            } else {
+                                result += translatedTexts[i] + "\n" + subtitles[i] + "\n\n";
+                            }
                         }
+                        $done({ body: result });
+                        return;
                     }
                     
-                    $done({ body: result });
-                });
+                    console.log(`Processing batch ${batchIndex + 1}/${totalBatches}`);
+                    const startIndex = batchIndex * BATCH_SIZE;
+                    const translations = await translateBatch(subtitles, startIndex, BATCH_SIZE);
+                    translatedTexts = translatedTexts.concat(translations);
+                    
+                    // 处理下一批
+                    setTimeout(() => {
+                        processBatches(batchIndex + 1);
+                    }, 500); // 每批之间等待500ms
+                }
+                
+                // 开始处理第一批
+                processBatches();
             } else {
                 $done({ body });
             }
