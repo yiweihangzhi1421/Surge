@@ -4,152 +4,99 @@ Made by 2024
 */
 
 const url = $request.url;
-const default_settings = {
-    type: "Google",
+const settings = {
     sl: "auto",
     tl: "zh",
-    line: "s",
-    delay: 300,        // 增加延迟到300ms
-    retries: 2,        // 翻译失败时重试次数
-    backoff: 1000      // 重试间隔时间(ms)
+    delay: 800      // 非常保守的延迟设置
 };
 
-// 读取设置
-let settings = $persistentStore.read('tubi_translate_settings');
-settings = settings ? {...default_settings, ...JSON.parse(settings)} : default_settings;
-
-// 翻译函数（带重试）
-async function translate(text, retryCount = 0) {
-    if (!text?.trim()) return '';
-
+// 简化的翻译函数
+function translate(text) {
     return new Promise((resolve) => {
-        const options = {
+        if (!text?.trim()) {
+            resolve('');
+            return;
+        }
+
+        $httpClient.post({
             url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
             headers: {
                 'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)'
             },
             body: `q=${encodeURIComponent(text.trim())}`
-        };
-
-        $httpClient.post(options, async (error, response, data) => {
+        }, (error, response, data) => {
             try {
                 if (error) throw error;
                 const result = JSON.parse(data);
-                const translated = result.sentences?.map(s => s.trans).join('').trim() || '';
-                if (translated) {
-                    resolve(translated);
-                } else if (retryCount < settings.retries) {
-                    // 翻译失败，等待后重试
-                    await new Promise(r => setTimeout(r, settings.backoff * (retryCount + 1)));
-                    const retryResult = await translate(text, retryCount + 1);
-                    resolve(retryResult);
-                } else {
-                    resolve('');
-                }
+                resolve(result.sentences?.map(s => s.trans).join('').trim() || '');
             } catch (e) {
-                if (retryCount < settings.retries) {
-                    // 出错重试
-                    setTimeout(async () => {
-                        const retryResult = await translate(text, retryCount + 1);
-                        resolve(retryResult);
-                    }, settings.backoff * (retryCount + 1));
-                } else {
-                    resolve('');
-                }
+                resolve('');
             }
         });
     });
 }
 
-// 加入翻译队列
-const translationQueue = [];
-let isProcessing = false;
+// 主处理函数
+function processSubtitles(vttContent) {
+    const processedBlocks = ['WEBVTT\n'];
+    const blocks = vttContent.split('\n\n').filter(block => block.trim());
+    let currentIndex = 0;
 
-async function processQueue() {
-    if (isProcessing || translationQueue.length === 0) return;
-    isProcessing = true;
-
-    const {text, resolve, reject} = translationQueue.shift();
-    try {
-        const result = await translate(text);
-        resolve(result);
-    } catch (e) {
-        reject(e);
-    } finally {
-        isProcessing = false;
-        setTimeout(processQueue, settings.delay);
-    }
-}
-
-function queueTranslation(text) {
-    return new Promise((resolve, reject) => {
-        translationQueue.push({text, resolve, reject});
-        if (!isProcessing) processQueue();
-    });
-}
-
-// 处理字幕块
-async function processSubtitles(body) {
-    try {
-        const blocks = body.split('\n\n').filter(b => b.trim());
-        const result = ['WEBVTT\n'];
-
-        for (const block of blocks) {
-            const lines = block.split('\n');
-            const timing = lines.find(line => line.includes(' --> '));
-
-            if (!timing) {
-                result.push(block, '');
-                continue;
-            }
-
-            const text = lines.slice(lines.indexOf(timing) + 1).join(' ').trim();
-            
-            if (!text) {
-                result.push(block, '');
-                continue;
-            }
-
-            const translated = await queueTranslation(text);
-            
-            if (translated) {
-                result.push(
-                    timing,
-                    settings.line === 's' ? text : translated,
-                    settings.line === 's' ? translated : text,
-                    ''
-                );
-            } else {
-                result.push(block, '');
-            }
+    function processNextBlock() {
+        if (currentIndex >= blocks.length) {
+            $done({
+                body: processedBlocks.join('\n'),
+                headers: {'Content-Type': 'text/vtt;charset=utf-8'}
+            });
+            return;
         }
 
-        $done({
-            body: result.join('\n'),
-            headers: {
-                'Content-Type': 'text/vtt;charset=utf-8'
+        const block = blocks[currentIndex];
+        const lines = block.split('\n');
+        const timeIndex = lines.findIndex(line => line.includes(' --> '));
+
+        if (timeIndex === -1) {
+            processedBlocks.push(block + '\n');
+            currentIndex++;
+            setTimeout(processNextBlock, settings.delay);
+            return;
+        }
+
+        const timing = lines[timeIndex];
+        const text = lines.slice(timeIndex + 1).join(' ').trim();
+
+        if (!text) {
+            processedBlocks.push(block + '\n');
+            currentIndex++;
+            setTimeout(processNextBlock, settings.delay);
+            return;
+        }
+
+        translate(text).then(translated => {
+            if (translated) {
+                processedBlocks.push(timing);
+                processedBlocks.push(text);
+                processedBlocks.push(translated);
+                processedBlocks.push('');
+            } else {
+                processedBlocks.push(block + '\n');
             }
+            currentIndex++;
+            setTimeout(processNextBlock, settings.delay);
         });
-    } catch (e) {
-        console.log('处理错误:', e);
-        $done({});
     }
+
+    processNextBlock();
 }
 
-// 主函数
-function main() {
-    if (!url.includes('.vtt') || settings.type === "Disable") {
-        $done({});
-        return;
-    }
-
+// 入口函数
+if (url.includes('.vtt')) {
     const body = $response.body?.replace(/^WEBVTT\n/, '').trim();
-    if (!body) {
+    if (body) {
+        processSubtitles(body);
+    } else {
         $done({});
-        return;
     }
-
-    processSubtitles(body);
+} else {
+    $done({});
 }
-
-main();
