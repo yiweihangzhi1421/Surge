@@ -10,8 +10,7 @@ const default_settings = {
     translate_sound: true,
     speaker_format: "prefix",
     dkey: "null",
-    batch_size: 3,      // 批处理大小
-    delay: 500         // 请求间隔(毫秒)
+    chunk_size: 10      // 分块处理大小
 };
 
 // 读取设置
@@ -24,210 +23,94 @@ if (!settings) {
     if (settings.translate_sound === undefined) {
         settings.translate_sound = true;
     }
-    if (settings.batch_size === undefined) {
-        settings.batch_size = 3;
-    }
-    if (settings.delay === undefined) {
-        settings.delay = 500;
+    if (settings.chunk_size === undefined) {
+        settings.chunk_size = 10;
     }
     $persistentStore.write(JSON.stringify(settings), 'tubi_settings');
 }
 
-// 翻译队列管理器
-class TranslationQueue {
-    constructor(batchSize = 3, delay = 500) {
-        this.queue = [];
-        this.running = false;
-        this.batchSize = batchSize;
-        this.delay = delay;
-        this.activeRequests = 0;
-    }
-
-    add(text, callback) {
-        this.queue.push({ text, callback });
-        if (!this.running) {
-            this.processQueue();
-        }
-    }
-
-    async processQueue() {
-        this.running = true;
-
-        while (this.queue.length > 0 && this.activeRequests < this.batchSize) {
-            const item = this.queue.shift();
-            this.activeRequests++;
-
-            try {
-                const translated = await this.translateWithRetry(item.text);
-                item.callback(translated);
-            } catch (error) {
-                console.log('翻译失败:', error);
-                item.callback('');
-            } finally {
-                this.activeRequests--;
-            }
-
-            // 添加延迟
-            await new Promise(resolve => setTimeout(resolve, this.delay));
+// 简化的翻译请求函数
+function handleTranslationRequest(text) {
+    return new Promise((resolve) => {
+        if (!text.trim()) {
+            resolve('');
+            return;
         }
 
-        if (this.queue.length > 0) {
-            setTimeout(() => this.processQueue(), this.delay);
-        } else {
-            this.running = false;
-        }
-    }
+        const options = {
+            url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
+            headers: {
+                'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)'
+            },
+            body: `q=${encodeURIComponent(text)}`
+        };
 
-    async translateWithRetry(text, maxRetries = 3) {
-        let retries = 0;
-        while (retries < maxRetries) {
-            try {
-                return await this.translate(text);
-            } catch (error) {
-                retries++;
-                if (retries === maxRetries) throw error;
-                // 指数退避延迟
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 1000));
-            }
-        }
-    }
-
-    translate(text) {
-        return new Promise((resolve, reject) => {
-            if (!text.trim()) {
+        $httpClient.post(options, function(error, response, data) {
+            if (error) {
+                console.log('翻译请求错误:', error);
                 resolve('');
                 return;
             }
-
-            const options = {
-                url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
-                headers: {
-                    'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)'
-                },
-                body: `q=${encodeURIComponent(text)}`
-            };
-
-            $httpClient.post(options, function(error, response, data) {
-                if (error) {
-                    reject(error);
-                    return;
+            try {
+                const result = JSON.parse(data);
+                if (result.sentences) {
+                    resolve(result.sentences.map(s => s.trans).join('').trim());
+                } else {
+                    resolve('');
                 }
-                try {
-                    const result = JSON.parse(data);
-                    if (result.sentences) {
-                        const translated = result.sentences.map(s => s.trans).join('').trim();
-                        resolve(translated);
-                    } else {
-                        resolve('');
-                    }
-                } catch (e) {
-                    reject(e);
-                }
-            });
+            } catch (e) {
+                console.log('翻译解析错误:', e);
+                resolve('');
+            }
         });
-    }
+    });
 }
 
-// 创建翻译队列实例
-const translationQueue = new TranslationQueue(settings.batch_size, settings.delay);
-
-function formatSubtitleBlock(timing, originalText, translatedText, speaker = '') {
-    let formattedBlock = timing + '\n';
-    
-    if (speaker) {
-        switch (settings.speaker_format) {
-            case "prefix":
-            case "append":
-                if (settings.line === 's') {
-                    formattedBlock += `${originalText}\n${translatedText}`;
-                } else {
-                    formattedBlock += `${translatedText}\n${originalText}`;
-                }
-                break;
-            default:
-                if (settings.line === 's') {
-                    formattedBlock += `${originalText}\n${translatedText}`;
-                } else {
-                    formattedBlock += `${translatedText}\n${originalText}`;
-                }
-        }
-    } else {
-        if (settings.line === 's') {
-            formattedBlock += `${originalText}\n${translatedText}`;
-        } else {
-            formattedBlock += `${translatedText}\n${originalText}`;
-        }
-    }
-    
-    return formattedBlock;
+function formatSubtitleBlock(timing, originalText, translatedText) {
+    return `${timing}\n${settings.line === 's' ? originalText : translatedText}\n${settings.line === 's' ? translatedText : originalText}`;
 }
 
-function processBlock(block, index, translatedBlocks, finishIfDone) {
+async function processBlock(block) {
     const lines = block.split('\n');
     const timing = lines.find(line => line.includes(' --> '));
     
-    if (!timing) {
-        translatedBlocks[index] = block;
-        finishIfDone();
-        return;
-    }
+    if (!timing) return block;
 
     const dialogueLines = lines.slice(lines.indexOf(timing) + 1);
     const dialogue = dialogueLines.join(' ').trim();
 
-    if (!dialogue || dialogue.match(/^[.,!?，。！？\s]+$/)) {
-        translatedBlocks[index] = block;
-        finishIfDone();
-        return;
-    }
+    if (!dialogue || dialogue.match(/^[.,!?，。！？\s]+$/)) return block;
 
     const cleanDialogue = dialogue.replace(/^(.*?):\s*\1:\s*/, '$1: ');
     const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(cleanDialogue);
     
+    let textToTranslate = cleanDialogue;
     if (isSoundEffect && settings.translate_sound) {
-        const textToTranslate = cleanDialogue.replace(/[\[\(\)\]]/g, '').trim();
-        translationQueue.add(textToTranslate, (translated) => {
-            if (translated) {
-                translatedBlocks[index] = formatSubtitleBlock(timing, cleanDialogue, `(${translated})`);
-            } else {
-                translatedBlocks[index] = block;
-            }
-            finishIfDone();
-        });
-    } else {
-        const speakerMatch = cleanDialogue.match(/^([^:：]+)[:\s]/);
-        let speaker = '';
-        let textToTranslate = cleanDialogue;
-
-        if (speakerMatch) {
-            speaker = speakerMatch[1];
-            textToTranslate = cleanDialogue.replace(/^[^:：]+[:：]\s*/, '');
-        }
-
-        translationQueue.add(textToTranslate, (translated) => {
-            if (translated) {
-                if (speaker) {
-                    translatedBlocks[index] = formatSubtitleBlock(
-                        timing,
-                        `${speaker}: ${textToTranslate}`,
-                        `${speaker}: ${translated}`
-                    );
-                } else {
-                    translatedBlocks[index] = formatSubtitleBlock(
-                        timing,
-                        textToTranslate,
-                        translated
-                    );
-                }
-            } else {
-                translatedBlocks[index] = block;
-            }
-            finishIfDone();
-        });
+        textToTranslate = cleanDialogue.replace(/[\[\(\)\]]/g, '').trim();
     }
+
+    const translated = await handleTranslationRequest(textToTranslate);
+    if (!translated) return block;
+
+    if (isSoundEffect && settings.translate_sound) {
+        return formatSubtitleBlock(timing, cleanDialogue, `(${translated})`);
+    }
+    return formatSubtitleBlock(timing, cleanDialogue, translated);
 }
 
-function processSubtitles(body) {
+async function processChunk(blocks, startIndex) {
+    const results = [];
+    const endIndex = Math.min(startIndex + settings.chunk_size, blocks.length);
+    
+    for (let i = startIndex; i < endIndex; i++) {
+        const result = await processBlock(blocks[i]);
+        results.push(result);
+    }
+    
+    return results;
+}
+
+async function processSubtitles(body) {
     if (settings.type === "Disable" || !body) {
         $done({});
         return;
@@ -237,24 +120,23 @@ function processSubtitles(body) {
         const header = "WEBVTT\n\n";
         body = body.replace(/^WEBVTT\n/, '').trim();
         const subtitleBlocks = body.split('\n\n').filter(block => block.trim());
-        const translatedBlocks = new Array(subtitleBlocks.length);
-        let pendingTranslations = subtitleBlocks.length;
+        const translatedBlocks = [];
 
-        const finishIfDone = () => {
-            pendingTranslations--;
-            if (pendingTranslations <= 0) {
-                const finalBody = header + translatedBlocks.join('\n\n') + '\n';
-                $done({ 
-                    body: finalBody,
-                    headers: {
-                        'Content-Type': 'text/vtt;charset=utf-8'
-                    }
-                });
+        // 分块处理字幕
+        for (let i = 0; i < subtitleBlocks.length; i += settings.chunk_size) {
+            const processedChunk = await processChunk(subtitleBlocks, i);
+            translatedBlocks.push(...processedChunk);
+            
+            // 给系统一个短暂的喘息时间
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+
+        const finalBody = header + translatedBlocks.join('\n\n') + '\n';
+        $done({ 
+            body: finalBody,
+            headers: {
+                'Content-Type': 'text/vtt;charset=utf-8'
             }
-        };
-
-        subtitleBlocks.forEach((block, index) => {
-            processBlock(block, index, translatedBlocks, finishIfDone);
         });
     } catch (e) {
         console.log('处理字幕时发生错误:', e);
@@ -262,9 +144,9 @@ function processSubtitles(body) {
     }
 }
 
-function main() {
+async function main() {
     if (url.includes('.vtt')) {
-        processSubtitles($response.body);
+        await processSubtitles($response.body);
     } else if (url.includes('.m3u8')) {
         $done({});
     }
