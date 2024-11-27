@@ -116,35 +116,42 @@ else if (url.match(/\.vtt/)) {
             let url = buildGoogleTranslateUrl(text, setting.sl, setting.tl);
             let options = {
                 url: url,
-                method: "GET",
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
                 }
             };
             
             console.log("Translating:", text);
             console.log("Translation URL:", url);
             
-            return $task.fetch(options).then(function(response) {
-                try {
-                    let result = JSON.parse(response.body);
-                    if (result && result[0]) {
-                        let translatedText = "";
-                        for (let j = 0; j < result[0].length; j++) {
-                            if (result[0][j][0]) {
-                                translatedText += result[0][j][0];
-                            }
-                        }
-                        console.log("Translated text:", translatedText);
-                        return translatedText || text;
+            return new Promise(function(resolve) {
+                $httpClient.get(options, function(error, response, data) {
+                    if (error) {
+                        console.error("Request failed:", error);
+                        resolve(text);
+                        return;
                     }
-                    return text;
-                } catch (e) {
-                    console.error("Translation error:", e);
-                    return text;
-                }
-            }).then(null, function() {
-                return text;
+                    
+                    try {
+                        let result = JSON.parse(data);
+                        if (result && result[0]) {
+                            let translatedText = "";
+                            for (let j = 0; j < result[0].length; j++) {
+                                if (result[0][j][0]) {
+                                    translatedText += result[0][j][0];
+                                }
+                            }
+                            console.log("Translated text:", translatedText);
+                            resolve(translatedText || text);
+                        } else {
+                            resolve(text);
+                        }
+                    } catch (e) {
+                        console.error("Translation error:", e);
+                        resolve(text);
+                    }
+                });
             });
         });
         
