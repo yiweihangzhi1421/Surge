@@ -1,96 +1,88 @@
 const url = $request.url;
+const headers = $request.headers;
 
 const default_settings = {
-    type: "Google",
-    sl: "auto",
-    tl: "zh",
-    line: "s",
+    type: "Google",     
+    sl: "auto",         
+    tl: "zh",          
+    line: "s",         
     skip_brackets: false,
     translate_sound: true,
     speaker_format: "prefix",
-    dkey: "null"
+    dkey: "null"       
 };
 
+// Read settings
 let settings = $persistentStore.read('tubi_settings');
 if (!settings) {
     settings = default_settings;
     $persistentStore.write(JSON.stringify(settings), 'tubi_settings');
 } else {
     settings = JSON.parse(settings);
-}
-
-let requestQueue = [];
-let activeRequests = 0;
-const maxConcurrentRequests = 3; // 并发限制
-const delayBetweenRequests = 500; // 请求间隔
-const timeoutLimit = 8000; // 单任务超时时间
-
-function addToQueue(task) {
-    requestQueue.push(task);
-    processQueue();
-}
-
-function processQueue() {
-    while (activeRequests < maxConcurrentRequests && requestQueue.length > 0) {
-        const task = requestQueue.shift();
-        activeRequests++;
-        task(() => {
-            activeRequests--;
-            setTimeout(processQueue, delayBetweenRequests);
-        });
+    if (settings.translate_sound === undefined) {
+        settings.translate_sound = true;
+        $persistentStore.write(JSON.stringify(settings), 'tubi_settings');
     }
 }
 
 function handleTranslationRequest(text, callback) {
-    addToQueue((done) => {
-        if (!text || text.match(/^[\s.,!?♪]+$/)) {
-            console.log(`跳过无意义翻译: ${text}`);
-            callback(null);
-            done();
+    if (!text.trim()) {
+        callback('');
+        return;
+    }
+
+    const options = {
+        url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
+        headers: {
+            'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)'
+        },
+        body: `q=${encodeURIComponent(text)}`
+    };
+
+    $httpClient.post(options, function(error, response, data) {
+        if (error) {
+            callback('');
             return;
         }
-
-        const options = {
-            url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}`,
-            headers: { 'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)' },
-            body: `q=${encodeURIComponent(text)}`
-        };
-
-        let timeout = setTimeout(() => {
-            console.log(`请求超时: ${text}`);
-            callback(null);
-            done();
-        }, timeoutLimit);
-
-        $httpClient.post(options, (error, response, data) => {
-            clearTimeout(timeout);
-            if (error) {
-                console.log(`翻译请求失败: ${text}`);
-                callback(null);
+        try {
+            const result = JSON.parse(data);
+            if (result.sentences) {
+                const translated = result.sentences.map(s => s.trans).join('').trim();
+                callback(translated);
             } else {
-                try {
-                    const result = JSON.parse(data);
-                    if (result && result[0]) {
-                        const translations = result[0].map((item) => item[0]).join(' ').trim();
-                        callback(translations);
-                    } else {
-                        console.log(`翻译结果格式不符合预期: ${text}, 返回数据: ${data}`);
-                        callback(null);
-                    }
-                } catch (e) {
-                    console.log(`翻译结果解析失败: ${text}, 返回数据: ${data}`);
-                    callback(null);
-                }
+                callback('');
             }
-            done();
-        });
+        } catch (e) {
+            callback('');
+        }
     });
+}
+
+function formatSubtitleBlock(timing, originalText, translatedText, speaker = '') {
+    let formattedBlock = timing + '\n';
+    
+    if (speaker) {
+        switch (settings.speaker_format) {
+            case "prefix":
+                formattedBlock += `${speaker}: ${originalText}\n${speaker}: ${translatedText}`;
+                break;
+            case "append":
+                formattedBlock += `${originalText} (${speaker})\n${translatedText} (${speaker})`;
+                break;
+            default:
+                formattedBlock += `${originalText}\n${translatedText}`;
+        }
+    } else {
+        formattedBlock += `${originalText}\n${translatedText}`;
+    }
+    
+    return formattedBlock;
 }
 
 function processBlock(block, index, translatedBlocks, finishIfDone) {
     const lines = block.split('\n');
-    const timing = lines.find((line) => line.includes(' --> '));
-
+    const timing = lines.find(line => line.includes(' --> '));
+    
     if (!timing) {
         translatedBlocks[index] = block;
         finishIfDone();
@@ -99,26 +91,42 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
 
     const dialogueLines = lines.slice(lines.indexOf(timing) + 1);
     const dialogue = dialogueLines.join(' ').trim();
-    const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(dialogue);
 
-    const textToTranslate = isSoundEffect
-        ? dialogue.replace(/[\[\(\)\]]/g, '').trim()
-        : dialogue;
-
-    handleTranslationRequest(textToTranslate, (translated) => {
-        if (translated) {
-            let newBlock = `${timing}\n${dialogue}`;
-            if (isSoundEffect) {
-                newBlock += `\n(${translated})`;
-            } else {
-                newBlock += `\n${translated}`;
-            }
-            translatedBlocks[index] = newBlock;
-        } else {
-            translatedBlocks[index] = block;
-        }
+    if (!dialogue || dialogue.match(/^[.,!?，。！？\s]+$/)) {
+        translatedBlocks[index] = block;
         finishIfDone();
-    });
+        return;
+    }
+
+    const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(dialogue);
+    
+    if (isSoundEffect && settings.translate_sound) {
+        const textToTranslate = dialogue.replace(/[\[\(\)\]]/g, '').trim();
+        handleTranslationRequest(textToTranslate, (translated) => {
+            if (translated) {
+                translatedBlocks[index] = formatSubtitleBlock(timing, dialogue, `(${translated})`);
+            } else {
+                translatedBlocks[index] = block;
+            }
+            finishIfDone();
+        });
+    } else if (!isSoundEffect) {
+        const speakerMatch = dialogue.match(/^([^:：]+)[:\s]/);
+        const speaker = speakerMatch ? speakerMatch[1] : '';
+        const text = speakerMatch ? dialogue.replace(/^[^:：]+[:：]\s*/, '') : dialogue;
+
+        handleTranslationRequest(text, (translated) => {
+            if (translated) {
+                translatedBlocks[index] = formatSubtitleBlock(timing, text, translated, speaker);
+            } else {
+                translatedBlocks[index] = block;
+            }
+            finishIfDone();
+        });
+    } else {
+        translatedBlocks[index] = block;
+        finishIfDone();
+    }
 }
 
 function processSubtitles(body) {
@@ -128,15 +136,16 @@ function processSubtitles(body) {
     }
 
     const header = "WEBVTT\n\n";
-    body = body.replace(/^WEBVTT\n/, '');
-    const subtitleBlocks = body.split('\n\n').filter((block) => block.trim());
+    body = body.replace(/^WEBVTT\n/, '').trim();
+    const subtitleBlocks = body.split('\n\n').filter(block => block.trim());
     const translatedBlocks = new Array(subtitleBlocks.length);
     let pendingTranslations = subtitleBlocks.length;
 
     const finishIfDone = () => {
         pendingTranslations--;
         if (pendingTranslations <= 0) {
-            $done({ body: header + translatedBlocks.join('\n\n') });
+            const finalBody = header + translatedBlocks.join('\n\n') + '\n';
+            $done({ body: finalBody });
         }
     };
 
