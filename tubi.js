@@ -37,6 +37,9 @@ if (!settings) {
 }
 
 function handleTranslationRequest(text, callback) {
+    // 移除多余的冒号标记
+    text = text.replace(/:\s*:/g, ':').trim();
+    
     const options = {
         url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
         headers: {
@@ -74,8 +77,9 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
         return;
     }
 
+    // 获取对话内容，保持原始格式
     const dialogueLines = lines.slice(lines.indexOf(timing) + 1);
-    const dialogue = dialogueLines.join(' ').trim();
+    const dialogue = dialogueLines.join('\n').trim();
 
     // 检查是否为空或只有标点
     if (!dialogue || dialogue.match(/^[.,!?，。！？\s]+$/)) {
@@ -97,6 +101,7 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
         const textToTranslate = dialogue.replace(/[\[\(\)\]]/g, '').trim();
         handleTranslationRequest(textToTranslate, (translated) => {
             if (translated) {
+                // 保持原始格式，添加翻译
                 translatedBlocks[index] = `${timing}\n${dialogue}\n(${translated})`;
             } else {
                 translatedBlocks[index] = block;
@@ -104,29 +109,12 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
             finishIfDone();
         });
     } else {
-        // 处理普通对话
-        const speakerMatch = dialogue.match(/^([^:：]+)[:\s]/);
-        const speaker = speakerMatch ? speakerMatch[1] : '';
-        const text = speakerMatch ? dialogue.replace(/^[^:：]+[:：]\s*/, '') : dialogue;
-
-        handleTranslationRequest(text, (translated) => {
+        // 处理普通对话，保持原始换行
+        const dialogueToTranslate = dialogue.replace(/^([^:：]+)[:\s]:\s*/gm, '$1: ');
+        handleTranslationRequest(dialogueToTranslate, (translated) => {
             if (translated) {
-                let translatedBlock = timing + '\n';
-                if (speaker) {
-                    switch (settings.speaker_format) {
-                        case "prefix":
-                            translatedBlock += `${speaker}: ${text}\n${speaker}: ${translated}`;
-                            break;
-                        case "append":
-                            translatedBlock += `${text} (${speaker})\n${translated} (${speaker})`;
-                            break;
-                        default:
-                            translatedBlock += `${dialogue}\n${translated}`;
-                    }
-                } else {
-                    translatedBlock += `${dialogue}\n${translated}`;
-                }
-                translatedBlocks[index] = translatedBlock;
+                // 构建翻译后的字幕块，保持原格式
+                translatedBlocks[index] = `${timing}\n${dialogue}\n${translated}`;
             } else {
                 translatedBlocks[index] = block;
             }
@@ -141,8 +129,11 @@ function processSubtitles(body) {
         return;
     }
 
+    // 确保WEBVTT头部正确
     const header = "WEBVTT\n\n";
-    body = body.replace(/^WEBVTT\n/, '');
+    body = body.replace(/^WEBVTT\n/, '').trim();
+    
+    // 分割并过滤字幕块
     const subtitleBlocks = body.split('\n\n').filter(block => block.trim());
     const translatedBlocks = new Array(subtitleBlocks.length);
     let pendingTranslations = subtitleBlocks.length;
@@ -150,7 +141,9 @@ function processSubtitles(body) {
     const finishIfDone = () => {
         pendingTranslations--;
         if (pendingTranslations <= 0) {
-            $done({ body: header + translatedBlocks.join('\n\n') });
+            // 确保块之间有正确的分隔
+            const result = header + translatedBlocks.join('\n\n') + '\n';
+            $done({ body: result });
         }
     };
 
