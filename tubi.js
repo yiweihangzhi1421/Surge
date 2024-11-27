@@ -1,25 +1,14 @@
-/*
-Dualsub for Tubi (Surge) - 支持对话和音效
-
-[Script]
-Tubi-Dualsub = type=http-response,pattern=^https?:\/\/s\.adrise\.tv\/.+\.(vtt|m3u8),requires-body=1,max-size=0,timeout=30,script-path=Tubi-Dualsub.js
-Tubi-Dualsub-Setting = type=http-request,pattern=^https?:\/\/setting\.adrise\.tv\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Tubi-Dualsub.js
-
-[MITM]
-hostname = %APPEND% *.adrise.tv
-*/
-
 const url = $request.url;
 
 const default_settings = {
-    type: "Google",     // Google, DeepL, Disable
-    sl: "auto",         // 源语言
-    tl: "zh",           // 目标语言
-    line: "s",          // s: 翻译在下, f: 翻译在上
-    skip_brackets: false, // 改为false，不跳过括号内容
-    translate_sound: true, // 是否翻译音效
-    speaker_format: "prefix", // none, prefix, append
-    dkey: "null"        // DeepL API Key
+    type: "Google",
+    sl: "auto",
+    tl: "zh",
+    line: "s",
+    skip_brackets: false,
+    translate_sound: true,
+    speaker_format: "prefix",
+    dkey: "null"
 };
 
 let settings = $persistentStore.read('tubi_settings');
@@ -31,31 +20,25 @@ if (!settings) {
 }
 
 let requestQueue = [];
-let isProcessing = false;
-const maxConcurrentRequests = 1; // 并发限制
+let activeRequests = 0;
+const maxConcurrentRequests = 3; // 并发限制
 const delayBetweenRequests = 500; // 请求间隔
-const timeoutLimit = 10000; // 超时限制
+const timeoutLimit = 8000; // 单任务超时时间
 
 function addToQueue(task) {
     requestQueue.push(task);
-    if (!isProcessing) {
-        processQueue();
-    }
+    processQueue();
 }
 
 function processQueue() {
-    if (requestQueue.length === 0) {
-        isProcessing = false;
-        return;
+    while (activeRequests < maxConcurrentRequests && requestQueue.length > 0) {
+        const task = requestQueue.shift();
+        activeRequests++;
+        task(() => {
+            activeRequests--;
+            setTimeout(processQueue, delayBetweenRequests);
+        });
     }
-    isProcessing = true;
-
-    const task = requestQueue.shift();
-    task(() => {
-        setTimeout(() => {
-            processQueue();
-        }, delayBetweenRequests);
-    });
 }
 
 function handleTranslationRequest(text, callback) {
@@ -73,7 +56,14 @@ function handleTranslationRequest(text, callback) {
             body: `q=${encodeURIComponent(text)}`
         };
 
+        let timeout = setTimeout(() => {
+            console.log(`请求超时: ${text}`);
+            callback(null);
+            done();
+        }, timeoutLimit);
+
         $httpClient.post(options, (error, response, data) => {
+            clearTimeout(timeout);
             if (error) {
                 console.log(`翻译请求失败: ${text}`);
                 callback(null);
@@ -115,14 +105,7 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
         ? dialogue.replace(/[\[\(\)\]]/g, '').trim()
         : dialogue;
 
-    const timeout = setTimeout(() => {
-        console.log(`翻译超时: ${textToTranslate}`);
-        translatedBlocks[index] = block;
-        finishIfDone();
-    }, timeoutLimit);
-
     handleTranslationRequest(textToTranslate, (translated) => {
-        clearTimeout(timeout);
         if (translated) {
             let newBlock = `${timing}\n${dialogue}`;
             if (isSoundEffect) {
