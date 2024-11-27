@@ -139,22 +139,36 @@ class TranslationService {
     static async googleTranslate(text, sl, tl) {
         if (!text.trim()) return "";
         
+        const constructUrl = (text, sl, tl) => {
+            const baseUrl = "https://translate.googleapis.com/translate_a/single";
+            const params = new URLSearchParams({
+                client: "gtx",
+                sl: sl,
+                tl: tl,
+                dt: "t",
+                q: text
+            });
+            return `${baseUrl}?${params.toString()}`;
+        };
+
+        const url = constructUrl(text, sl, tl);
         const options = {
-            url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`,
-            method: "GET"
+            url: url,
+            method: "GET",
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
         };
         
         console.log(`Translating text: "${text}" from ${sl} to ${tl}`);
-        console.log("Google Translate URL:", options.url);
+        console.log("Google Translate URL:", url);
         
         try {
             const response = await this.sendRequest(options);
             console.log("Google Translate raw response:", JSON.stringify(response));
             
-            // Google API 返回的是一个嵌套数组，我们需要提取第一个翻译结果
             if (response && Array.isArray(response[0])) {
                 let translatedText = '';
-                // 合并所有翻译片段
                 for (let i = 0; i < response[0].length; i++) {
                     if (response[0][i][0]) {
                         translatedText += response[0][i][0];
@@ -163,7 +177,13 @@ class TranslationService {
                 console.log(`Translation result: "${translatedText}"`);
                 return translatedText || text;
             }
+            console.log("Invalid response format, returning original text");
             return text;
+        } catch (error) {
+            console.error('Google translation error:', error);
+            return text;
+        }
+    }
         } catch (error) {
             console.error('Google translation error:', error);
             return text;
