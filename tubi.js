@@ -1,6 +1,6 @@
 let url = $request.url;
 
-// Surge 持久化存储函数
+// 存储函数
 function saveSetting(key, value) {
     return $persistentStore.write(value, key);
 }
@@ -49,16 +49,18 @@ function buildGoogleTranslateUrl(text, sl, tl) {
 
 // HTTP 请求封装
 function sendRequest(options) {
-    return new Promise(function(resolve, reject) {
+    return new Promise(function(resolve) {
         $task.fetch(options).then(function(response) {
             try {
                 let result = JSON.parse(response.body);
                 resolve(result);
             } catch (e) {
-                reject(e);
+                console.error("Parse response failed:", e);
+                resolve(null);
             }
-        }, function(reason) {
-            reject(reason);
+        }).then(null, function(error) {
+            console.error("Request failed:", error);
+            resolve(null);
         });
     });
 }
@@ -68,50 +70,41 @@ async function translateSubtitles(subtitles, engine, sl, tl) {
     let translated = [];
     let i = 0;
     
-    try {
-        if (engine === "Google") {
-            for (i = 0; i < subtitles.length; i++) {
-                if (!subtitles[i].trim()) {
-                    translated.push("");
-                    continue;
+    if (engine === "Google") {
+        for (i = 0; i < subtitles.length; i++) {
+            if (!subtitles[i].trim()) {
+                translated.push("");
+                continue;
+            }
+
+            let url = buildGoogleTranslateUrl(subtitles[i], sl, tl);
+            console.log("Translating:", subtitles[i]);
+            console.log("URL:", url);
+
+            let options = {
+                url: url,
+                method: "GET",
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
+            };
 
-                let url = buildGoogleTranslateUrl(subtitles[i], sl, tl);
-                console.log("Translating:", subtitles[i]);
-                console.log("URL:", url);
-
-                let options = {
-                    url: url,
-                    method: "GET",
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            let response = await sendRequest(options);
+            console.log("Response:", JSON.stringify(response));
+            
+            if (response && response[0]) {
+                let translatedText = "";
+                for (let j = 0; j < response[0].length; j++) {
+                    if (response[0][j][0]) {
+                        translatedText += response[0][j][0];
                     }
-                };
-
-                try {
-                    let response = await sendRequest(options);
-                    console.log("Response:", JSON.stringify(response));
-                    
-                    if (response && response[0]) {
-                        let translatedText = "";
-                        for (let j = 0; j < response[0].length; j++) {
-                            if (response[0][j][0]) {
-                                translatedText += response[0][j][0];
-                            }
-                        }
-                        console.log("Translated:", translatedText);
-                        translated.push(translatedText || subtitles[i]);
-                    } else {
-                        translated.push(subtitles[i]);
-                    }
-                } catch (err) {
-                    console.error("Translation error for text:", subtitles[i], err);
-                    translated.push(subtitles[i]);
                 }
+                console.log("Translated:", translatedText);
+                translated.push(translatedText || subtitles[i]);
+            } else {
+                translated.push(subtitles[i]);
             }
         }
-    } catch (err) {
-        console.error("Translation error:", err);
     }
     
     return translated;
@@ -146,56 +139,37 @@ function rebuildVTT(timeline, original, translated, line) {
     return result;
 }
 
-// 处理 .m3u8 文件
+// 主处理流程
 if (url.match(/\.m3u8/)) {
-    console.log("Processing .m3u8 file...");
-    
     let body = $response.body;
-    console.log("Original .m3u8 Content:\n", body);
-
+    console.log("Processing m3u8 file");
+    
     let patt = /#EXTINF:.+\n([^\n]+\.vtt)/;
     let match = body.match(patt);
-
+    
     if (match && match[1]) {
         let subtitles_url = url.replace(/\/[^\/]+$/, "/" + match[1]);
-        console.log("Extracted subtitles URL:", subtitles_url);
+        console.log("Found subtitles URL:", subtitles_url);
         settings[service].t_subtitles_url = subtitles_url;
         saveSetting("settings", JSON.stringify(settings));
-    } else {
-        console.error("Failed to extract subtitles URL from .m3u8 file.");
     }
-
+    
     $done({ body });
-}
-
-// 处理 .vtt 文件
-if (url.match(/\.vtt/)) {
-    console.log("Processing .vtt file...");
-    console.log("Current settings:", JSON.stringify({
-        type: setting.type,
-        lang: setting.lang,
-        sl: setting.sl,
-        tl: setting.tl,
-        line: setting.line
-    }, null, 2));
-
-    if (setting.type === "Disable") {
-        console.log("Translation disabled");
-        $done({ body: $response.body });
-    }
-
+} else if (url.match(/\.vtt/)) {
     let body = $response.body;
-    if (!body || body.trim() === "") {
-        console.error("Empty .vtt file content");
+    console.log("Processing VTT file");
+    console.log("Settings:", JSON.stringify(setting));
+    
+    if (setting.type === "Disable" || !body || body.trim() === "") {
         $done({ body });
+        return;
     }
-
-    // 解析 WebVTT 文件
+    
     let lines = body.split("\n");
     let timelineRegex = /\d{2}:\d{2}.\d{3} --> \d{2}:\d{2}.\d{3}/;
     let timeline = [];
     let subtitles = [];
-
+    
     for (let i = 0; i < lines.length; i++) {
         if (timelineRegex.test(lines[i])) {
             timeline.push(lines[i]);
@@ -203,22 +177,20 @@ if (url.match(/\.vtt/)) {
             i++;
         }
     }
-
-    console.log("Parsed timeline count:", timeline.length);
-    console.log("Parsed subtitles count:", subtitles.length);
-
-    if (!timeline.length || !subtitles.length) {
-        console.error("Failed to parse .vtt file");
+    
+    console.log("Found subtitles:", subtitles.length);
+    
+    if (timeline.length > 0 && subtitles.length > 0) {
+        translateSubtitles(subtitles, setting.type, setting.sl, setting.tl).then(function(translated) {
+            let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
+            $done({ body: translatedBody });
+        }).then(null, function(error) {
+            console.error("Translation error:", error);
+            $done({ body });
+        });
+    } else {
         $done({ body });
     }
-
-    translateSubtitles(subtitles, setting.type, setting.sl, setting.tl).then(function(translated) {
-        console.log("Translation completed");
-        let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
-        console.log("Final VTT content generated");
-        $done({ body: translatedBody });
-    }).catch(function(err) {
-        console.error("Translation failed:", err);
-        $done({ body });
-    });
+} else {
+    $done({});
 }
