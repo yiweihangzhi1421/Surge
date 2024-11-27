@@ -37,11 +37,26 @@ let service = "Tubi";
 if (!settings[service]) settings[service] = default_settings[service];
 let setting = settings[service];
 
+// 处理特殊字幕内容
+function processSubtitleText(text) {
+    // 移除方括号内的音效提示
+    text = text.replace(/\[.*?\]/g, '').trim();
+    // 如果是纯音效描述，则直接返回
+    if (text === "") return "";
+    return text;
+}
+
 // 翻译函数
 async function translate(text) {
     return new Promise((resolve) => {
         if (!text || text.trim() === "") {
             resolve("");
+            return;
+        }
+
+        // 检查是否是音效描述
+        if (text.match(/^\[.*\]$/)) {
+            resolve(text.replace("[", "[").replace("]", "]"));
             return;
         }
 
@@ -54,7 +69,7 @@ async function translate(text) {
                 'Accept': '*/*',
                 'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7'
             },
-            timeout: 1000  // 1秒超时
+            timeout: 1000
         }, function(error, response, data) {
             if (error) {
                 console.log('翻译错误:', error);
@@ -92,14 +107,20 @@ async function translateBatch(subtitles, startIndex, batchSize) {
         
         const globalIndex = startIndex + i;
         try {
-            const translated = await translate(text);
+            const processed = processSubtitleText(text);
+            if (!processed) {
+                translations.push(text);  // 如果是音效描述，保持原样
+                continue;
+            }
+            
+            const translated = await translate(processed);
             console.log(`[${globalIndex + 1}/${subtitles.length}] "${text}" => "${translated}"`);
             translations.push(translated);
         } catch (e) {
             console.log(`翻译错误 [${globalIndex + 1}]:`, e);
             translations.push(text);
         }
-        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms延迟
+        await new Promise(resolve => setTimeout(resolve, 100));
     }
     
     return translations;
@@ -189,22 +210,19 @@ async function processRequest() {
                 
                 const translations = await translateBatch(textsToTranslate, i, BATCH_SIZE);
                 
-                // 立即写入当前批次的字幕
                 batch.forEach((cue, index) => {
                     const translation = translations[index];
-                    // 每个字幕块的格式：时间轴 + 原文 + 翻译 + 空行
                     modifiedContent += cue.timing + "\n";  // 时间轴
-                    modifiedContent += cue.text.join("\n") + "\n";  // 原文（保持原有的换行）
-                    if (translation) {
+                    // 检查是否是音效描述或空内容
+                    const originalText = cue.text.join("\n");
+                    const isEffect = originalText.match(/^\[.*\]$/);
+                    
+                    modifiedContent += originalText + "\n";  // 原文
+                    if (!isEffect && translation) {
                         modifiedContent += translation + "\n";  // 翻译
                     }
                     modifiedContent += "\n";  // 空行分隔
                 });
-
-                // 每处理10批显示进度
-                if (i % (BATCH_SIZE * 10) === 0) {
-                    console.log(`已处理 ${i}/${cues.length} 条字幕`);
-                }
             }
 
             console.log("字幕重建完成");
