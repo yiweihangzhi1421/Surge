@@ -1,30 +1,28 @@
 /*
-    Dualsub for Tubi (Surge) - 直接翻译版
+    Dualsub for Tubi (Surge) - 最小化版本
 */
 
 const url = $request.url;
 
-function translateText(text) {
+function translate(text) {
     return new Promise((resolve) => {
-        let options = {
-            url: 'https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=auto&tl=zh',
+        // 使用最简单的翻译API
+        const options = {
+            url: `http://translate.google.cn/translate_a/single?client=gtx&dt=t&sl=auto&tl=zh&q=${encodeURIComponent(text)}`,
             headers: {
-                'User-Agent': 'Mozilla/5.0'
+                'User-Agent': 'Mozilla/5.0',
             }
         };
-        
-        // 直接添加查询参数到URL，而不是作为body发送
-        options.url += `&q=${encodeURIComponent(text)}`;
 
         $httpClient.get(options, function(err, resp, data) {
-            if (err) {
-                resolve('');
-                return;
-            }
+            if (err) resolve('');
             try {
                 const obj = JSON.parse(data);
-                const translated = obj[0].map(item => item[0]).join('');
-                resolve(translated || '');
+                if (obj && obj[0] && obj[0][0] && obj[0][0][0]) {
+                    resolve(obj[0][0][0]);
+                } else {
+                    resolve('');
+                }
             } catch (e) {
                 resolve('');
             }
@@ -32,57 +30,56 @@ function translateText(text) {
     });
 }
 
-async function processSubtitles(body) {
-    if (!body) {
-        $done({});
-        return;
-    }
+async function processFirstBatch(body) {
+    const header = "WEBVTT\n\n";
+    const blocks = body.replace(/^WEBVTT\n/, '').trim().split('\n\n');
+    
+    // 只处理前5个块
+    const firstBlocks = blocks.slice(0, 5);
+    const translatedBlocks = [];
 
     try {
-        const header = "WEBVTT\n\n";
-        body = body.replace(/^WEBVTT\n/, '').trim();
-        
-        const blocks = body.split('\n\n');
-        const translatedBlocks = [];
-
-        for (const block of blocks) {
+        for (const block of firstBlocks) {
             const lines = block.split('\n');
-            const timing = lines.find(line => line.includes(' --> '));
+            const timing = lines.find(l => l.includes(' --> '));
             
             if (!timing) {
                 translatedBlocks.push(block);
                 continue;
             }
 
-            const dialogueLines = lines.slice(lines.indexOf(timing) + 1);
-            const dialogue = dialogueLines.join(' ').trim();
+            const contentLines = lines.slice(lines.indexOf(timing) + 1);
+            const text = contentLines.join(' ').trim();
 
-            // 跳过空行和纯音乐符号
-            if (!dialogue || dialogue === '♪') {
+            if (!text || text === '♪' || text.match(/^[.,!?，。！？\s]+$/)) {
                 translatedBlocks.push(block);
                 continue;
             }
 
-            const translated = await translateText(dialogue);
-            if (translated) {
-                translatedBlocks.push(`${timing}\n${dialogue}\n${translated}`);
-            } else {
-                translatedBlocks.push(block);
-            }
+            const translated = await translate(text);
+            translatedBlocks.push(
+                translated ? 
+                `${timing}\n${text}\n${translated}` : 
+                block
+            );
 
-            // 每次翻译后暂停100ms
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // 每次翻译后短暂等待
+            await new Promise(r => setTimeout(r, 200));
         }
 
-        const result = header + translatedBlocks.join('\n\n') + '\n';
-        $done({ body: result });
-    } catch (error) {
-        $done({}); // 出错时返回原字幕
+        return header + translatedBlocks.join('\n\n') + '\n';
+    } catch {
+        return body;
     }
 }
 
+// 主函数
 if (url.includes('.vtt')) {
-    processSubtitles($response.body);
+    processFirstBatch($response.body).then(result => {
+        $done({ body: result });
+    }).catch(() => {
+        $done({});
+    });
 } else if (url.includes('.m3u8')) {
     $done({});
 }
