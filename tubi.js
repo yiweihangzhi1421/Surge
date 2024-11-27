@@ -201,9 +201,12 @@ function processSubtitles(body) {
     }
 }
 
-// 主处理逻辑
-if (url.includes('.vtt')) {
-    processSubtitles($response.body);
-} else if (url.includes('.m3u8')) {
-    $done({});
+function main() {
+    if (url.includes('.vtt')) {
+        processSubtitles($response.body);
+    } else if (url.includes('.m3u8')) {
+        $done({});
+    }
 }
+
+main();
