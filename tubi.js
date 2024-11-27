@@ -30,11 +30,11 @@ if (!settings) {
     settings = JSON.parse(settings);
 }
 
-// 请求队列控制
 let requestQueue = [];
 let isProcessing = false;
-const maxConcurrentRequests = 1; // 并发限制：一次只处理一个请求
-const delayBetweenRequests = 500; // 请求间隔：500毫秒
+const maxConcurrentRequests = 1; // 并发限制
+const delayBetweenRequests = 500; // 请求间隔
+const timeoutLimit = 10000; // 单字幕块处理超时（10秒）
 
 function addToQueue(task) {
     requestQueue.push(task);
@@ -60,6 +60,13 @@ function processQueue() {
 
 function handleTranslationRequest(text, callback) {
     addToQueue((done) => {
+        if (!text || text.match(/^[\s.,!?♪]+$/)) {
+            console.log(`跳过翻译无意义内容: ${text}`);
+            callback(null);
+            done();
+            return;
+        }
+
         const options = {
             url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}`,
             headers: { 'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)' },
@@ -73,14 +80,14 @@ function handleTranslationRequest(text, callback) {
             } else {
                 try {
                     const result = JSON.parse(data);
-                    const translated = result.sentences.map((s) => s.trans.trim()).join(' ');
-                    callback(translated || null);
+                    const translations = result.sentences.map((s) => s.trans.trim());
+                    callback(translations.join(' '));
                 } catch (e) {
-                    console.log(`翻译结果解析失败: ${text}`);
+                    console.log(`翻译结果解析失败: ${text}, 返回数据: ${data}`);
                     callback(null);
                 }
             }
-            done(); // 完成任务后调用
+            done();
         });
     });
 }
@@ -103,7 +110,14 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
         ? dialogue.replace(/[\[\(\)\]]/g, '').trim()
         : dialogue;
 
+    const timeout = setTimeout(() => {
+        console.log(`翻译超时: ${textToTranslate}`);
+        translatedBlocks[index] = block;
+        finishIfDone();
+    }, timeoutLimit);
+
     handleTranslationRequest(textToTranslate, (translated) => {
+        clearTimeout(timeout);
         if (translated) {
             let newBlock = `${timing}\n${dialogue}`;
             if (isSoundEffect) {
@@ -113,7 +127,7 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
             }
             translatedBlocks[index] = newBlock;
         } else {
-            translatedBlocks[index] = block; // 保留原始内容
+            translatedBlocks[index] = block;
         }
         finishIfDone();
     });
