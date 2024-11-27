@@ -32,9 +32,9 @@ if (!settings) {
 
 let requestQueue = [];
 let isProcessing = false;
-const maxConcurrentRequests = 1;
-const delayBetweenRequests = 500;
-const timeoutLimit = 10000;
+const maxConcurrentRequests = 1; // 并发限制
+const delayBetweenRequests = 500; // 请求间隔
+const timeoutLimit = 10000; // 超时限制
 
 function addToQueue(task) {
     requestQueue.push(task);
@@ -80,11 +80,11 @@ function handleTranslationRequest(text, callback) {
             } else {
                 try {
                     const result = JSON.parse(data);
-                    if (result && result.sentences) {
-                        const translations = result.sentences.map((s) => s.trans.trim());
-                        callback(translations.join(' '));
+                    if (result && result[0]) {
+                        const translations = result[0].map((item) => item[0]).join(' ').trim();
+                        callback(translations);
                     } else {
-                        console.log(`翻译结果缺失字段: ${text}, 返回数据: ${data}`);
+                        console.log(`翻译结果格式不符合预期: ${text}, 返回数据: ${data}`);
                         callback(null);
                     }
                 } catch (e) {
