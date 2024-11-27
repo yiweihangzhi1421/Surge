@@ -107,28 +107,27 @@ else if (url.match(/\.vtt/)) {
     console.log("Found subtitles:", subtitles.length);
     
     if (timeline.length > 0 && subtitles.length > 0) {
-        // 翻译所有字幕
-        let pendingTranslations = subtitles.map(function(text, index) {
-            if (!text.trim()) {
-                return Promise.resolve("");
-            }
-            
-            let url = buildGoogleTranslateUrl(text, setting.sl, setting.tl);
-            let options = {
-                url: url,
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept': 'application/json, text/javascript, */*; q=0.01',
-                }
-            };
-            
-            console.log("Translating:", text);
-            console.log("Translation URL:", url);
-            
+        // 创建所有翻译请求的Promise数组
+        let promises = subtitles.map(function(text) {
             return new Promise(function(resolve) {
-                $httpClient.get(options, function(error, response, data) {
+                if (!text.trim()) {
+                    resolve("");
+                    return;
+                }
+                
+                let translateUrl = buildGoogleTranslateUrl(text, setting.sl, setting.tl);
+                console.log("Translating:", text);
+                console.log("Translation URL:", translateUrl);
+                
+                $httpClient.get({
+                    url: translateUrl,
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/json, text/javascript, */*; q=0.01'
+                    }
+                }, function(error, response, data) {
                     if (error) {
-                        console.error("Request failed:", error);
+                        console.error("Translation request failed:", error);
                         resolve(text);
                         return;
                     }
@@ -142,27 +141,27 @@ else if (url.match(/\.vtt/)) {
                                     translatedText += result[0][j][0];
                                 }
                             }
-                            console.log("Translated text:", translatedText);
+                            console.log(`Original: "${text}", Translated: "${translatedText}"`);
                             resolve(translatedText || text);
                         } else {
                             resolve(text);
                         }
                     } catch (e) {
-                        console.error("Translation error:", e);
+                        console.error("Failed to parse translation response:", e);
                         resolve(text);
                     }
                 });
             });
         });
         
-        Promise.all(pendingTranslations).then(function(translated) {
-            let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
+        // 等待所有翻译完成
+        Promise.all(promises).then(function(translatedTexts) {
+            let translatedBody = rebuildVTT(timeline, subtitles, translatedTexts, setting.line);
+            console.log("Translation completed, rebuilt VTT file");
             $done({ body: translatedBody });
-        }).then(null, function(error) {
-            console.error("Translation failed:", error);
-            $done({ body });
         });
     } else {
+        console.log("No subtitles found in VTT file");
         $done({ body });
     }
 }
