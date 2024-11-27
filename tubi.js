@@ -10,7 +10,6 @@ hostname = %APPEND% *.adrise.tv
 */
 
 const url = $request.url;
-const headers = $request.headers;
 
 const default_settings = {
     type: "Google",     // Google, DeepL, Disable
@@ -19,7 +18,7 @@ const default_settings = {
     line: "s",          // s: 翻译在下, f: 翻译在上
     skip_brackets: false, // 改为false，不跳过括号内容
     translate_sound: true, // 是否翻译音效
-    speaker_format: "prefix", // none, prefix, append - 说话者标记的显示方式
+    speaker_format: "prefix", // none, prefix, append
     dkey: "null"        // DeepL API Key
 };
 
@@ -36,7 +35,14 @@ if (!settings) {
     }
 }
 
-function handleTranslationRequest(text, callback) {
+// 处理翻译请求
+function handleTranslationRequest(text, callback, retryCount = 0) {
+    if (retryCount > 2) {
+        console.log(`翻译失败: ${text}`);
+        callback(null); // 超过重试次数
+        return;
+    }
+
     const options = {
         url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}`,
         headers: {
@@ -47,21 +53,27 @@ function handleTranslationRequest(text, callback) {
 
     $httpClient.post(options, (error, response, data) => {
         if (error) {
-            console.log(`翻译失败: ${text}`);
-            callback(null); // 翻译失败回调
+            console.log(`请求失败: ${error}`);
+            setTimeout(() => {
+                handleTranslationRequest(text, callback, retryCount + 1); // 重试
+            }, 500); // 延迟 500ms 重试
             return;
         }
+
         try {
             const result = JSON.parse(data);
             const translated = result.sentences.map((s) => s.trans).join(' ').trim();
             callback(translated || null);
         } catch (e) {
             console.log(`解析失败: ${text}`);
-            callback(null);
+            setTimeout(() => {
+                handleTranslationRequest(text, callback, retryCount + 1); // 重试
+            }, 500); // 延迟 500ms 重试
         }
     });
 }
 
+// 处理单个字幕块
 function processBlock(block, index, translatedBlocks, finishIfDone) {
     const lines = block.split('\n');
     const timing = lines.find((line) => line.includes(' --> '));
@@ -76,7 +88,6 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
     const dialogue = dialogueLines.join(' ').trim();
     const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(dialogue);
 
-    // 处理翻译请求
     const textToTranslate = isSoundEffect
         ? dialogue.replace(/[\[\(\)\]]/g, '').trim()
         : dialogue;
@@ -97,6 +108,7 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
     });
 }
 
+// 处理字幕文件
 function processSubtitles(body) {
     if (settings.type === "Disable" || !body) {
         $done({});
@@ -121,7 +133,7 @@ function processSubtitles(body) {
     });
 }
 
-// 主处理逻辑
+// 主逻辑
 if (url.includes('.vtt')) {
     processSubtitles($response.body);
 } else if (url.includes('.m3u8')) {
