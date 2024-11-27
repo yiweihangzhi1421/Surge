@@ -131,17 +131,18 @@ async function processSubtitles(body) {
     }
 }
 
-if (url.includes('.vtt')) {
-    let body = $response.body;
-    
-    if (settings.type === "Disable" || !body) {
+// 主要处理逻辑
+(async () => {
+    if (url.includes('.vtt')) {
+        let body = $response.body;
+        
+        if (settings.type === "Disable" || !body) {
+            $done({});
+        } else {
+            const processed_body = await processSubtitles(body);
+            $done({ body: processed_body });
+        }
+    } else if (url.includes('.m3u8')) {
         $done({});
-        return;
     }
-
-    processSubtitles(body).then(processed_body => {
-        $done({ body: processed_body });
-    });
-} else if (url.includes('.m3u8')) {
-    $done({});
-}
+})();
