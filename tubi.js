@@ -30,28 +30,92 @@ if (!settings) {
     settings = JSON.parse(settings);
 }
 
-function batchTranslate(textArray, callback) {
-    const joinedText = textArray.join('\n');
-    const options = {
-        url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}`,
-        headers: { 'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)' },
-        body: `q=${encodeURIComponent(joinedText)}`
-    };
+// 请求队列控制
+let requestQueue = [];
+let isProcessing = false;
+const maxConcurrentRequests = 1; // 并发限制：一次只处理一个请求
+const delayBetweenRequests = 500; // 请求间隔：500毫秒
 
-    $httpClient.post(options, (error, response, data) => {
-        if (error || !data) {
-            console.log(`批量翻译失败: ${error}`);
-            callback(null);
-            return;
+function addToQueue(task) {
+    requestQueue.push(task);
+    if (!isProcessing) {
+        processQueue();
+    }
+}
+
+function processQueue() {
+    if (requestQueue.length === 0) {
+        isProcessing = false;
+        return;
+    }
+    isProcessing = true;
+
+    const task = requestQueue.shift();
+    task(() => {
+        setTimeout(() => {
+            processQueue();
+        }, delayBetweenRequests);
+    });
+}
+
+function handleTranslationRequest(text, callback) {
+    addToQueue((done) => {
+        const options = {
+            url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}`,
+            headers: { 'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)' },
+            body: `q=${encodeURIComponent(text)}`
+        };
+
+        $httpClient.post(options, (error, response, data) => {
+            if (error) {
+                console.log(`翻译请求失败: ${text}`);
+                callback(null);
+            } else {
+                try {
+                    const result = JSON.parse(data);
+                    const translated = result.sentences.map((s) => s.trans.trim()).join(' ');
+                    callback(translated || null);
+                } catch (e) {
+                    console.log(`翻译结果解析失败: ${text}`);
+                    callback(null);
+                }
+            }
+            done(); // 完成任务后调用
+        });
+    });
+}
+
+function processBlock(block, index, translatedBlocks, finishIfDone) {
+    const lines = block.split('\n');
+    const timing = lines.find((line) => line.includes(' --> '));
+
+    if (!timing) {
+        translatedBlocks[index] = block;
+        finishIfDone();
+        return;
+    }
+
+    const dialogueLines = lines.slice(lines.indexOf(timing) + 1);
+    const dialogue = dialogueLines.join(' ').trim();
+    const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(dialogue);
+
+    const textToTranslate = isSoundEffect
+        ? dialogue.replace(/[\[\(\)\]]/g, '').trim()
+        : dialogue;
+
+    handleTranslationRequest(textToTranslate, (translated) => {
+        if (translated) {
+            let newBlock = `${timing}\n${dialogue}`;
+            if (isSoundEffect) {
+                newBlock += `\n(${translated})`;
+            } else {
+                newBlock += `\n${translated}`;
+            }
+            translatedBlocks[index] = newBlock;
+        } else {
+            translatedBlocks[index] = block; // 保留原始内容
         }
-        try {
-            const result = JSON.parse(data);
-            const translations = result.sentences.map((s) => s.trans.trim());
-            callback(translations);
-        } catch (e) {
-            console.log(`解析失败: ${e}`);
-            callback(null);
-        }
+        finishIfDone();
     });
 }
 
@@ -64,26 +128,18 @@ function processSubtitles(body) {
     const header = "WEBVTT\n\n";
     body = body.replace(/^WEBVTT\n/, '');
     const subtitleBlocks = body.split('\n\n').filter((block) => block.trim());
-    const timings = subtitleBlocks.map((block) => block.split('\n')[0]);
-    const texts = subtitleBlocks.map((block) => {
-        const lines = block.split('\n').slice(1);
-        return lines.join(' ').trim();
-    });
+    const translatedBlocks = new Array(subtitleBlocks.length);
+    let pendingTranslations = subtitleBlocks.length;
 
-    batchTranslate(texts, (translatedTexts) => {
-        if (!translatedTexts) {
-            $done({ body: header + body });
-            return;
+    const finishIfDone = () => {
+        pendingTranslations--;
+        if (pendingTranslations <= 0) {
+            $done({ body: header + translatedBlocks.join('\n\n') });
         }
+    };
 
-        const translatedBlocks = subtitleBlocks.map((block, index) => {
-            const timing = timings[index];
-            const original = texts[index];
-            const translated = translatedTexts[index] || original;
-            return `${timing}\n${original}\n${translated}`;
-        });
-
-        $done({ body: header + translatedBlocks.join('\n\n') });
+    subtitleBlocks.forEach((block, index) => {
+        processBlock(block, index, translatedBlocks, finishIfDone);
     });
 }
 
