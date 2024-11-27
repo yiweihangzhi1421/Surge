@@ -1,3 +1,12 @@
+/*
+[Script]
+Tubi-Dualsub = type=http-response,pattern=^https?:\/\/s\.adrise\.tv\/.+\.(vtt|m3u8),requires-body=1,max-size=0,timeout=30,script-path=Tubi-Dualsub.js
+Tubi-Dualsub-Setting = type=http-request,pattern=^https?:\/\/setting\.adrise\.tv\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Tubi-Dualsub.js
+
+[MITM]
+hostname = %APPEND% *.adrise.tv
+*/
+
 const url = $request.url;
 const headers = $request.headers;
 
@@ -12,7 +21,7 @@ const default_settings = {
     dkey: "null"       
 };
 
-// Read settings
+// 读取设置
 let settings = $persistentStore.read('tubi_settings');
 if (!settings) {
     settings = default_settings;
@@ -41,6 +50,7 @@ function handleTranslationRequest(text, callback) {
 
     $httpClient.post(options, function(error, response, data) {
         if (error) {
+            console.log('翻译请求错误:', error);
             callback('');
             return;
         }
@@ -53,6 +63,7 @@ function handleTranslationRequest(text, callback) {
                 callback('');
             }
         } catch (e) {
+            console.log('翻译解析错误:', e);
             callback('');
         }
     });
@@ -64,16 +75,32 @@ function formatSubtitleBlock(timing, originalText, translatedText, speaker = '')
     if (speaker) {
         switch (settings.speaker_format) {
             case "prefix":
-                formattedBlock += `${speaker}: ${originalText}\n${speaker}: ${translatedText}`;
+                if (settings.line === 's') {
+                    formattedBlock += `${originalText}\n${translatedText}`;
+                } else {
+                    formattedBlock += `${translatedText}\n${originalText}`;
+                }
                 break;
             case "append":
-                formattedBlock += `${originalText} (${speaker})\n${translatedText} (${speaker})`;
+                if (settings.line === 's') {
+                    formattedBlock += `${originalText}\n${translatedText}`;
+                } else {
+                    formattedBlock += `${translatedText}\n${originalText}`;
+                }
                 break;
             default:
-                formattedBlock += `${originalText}\n${translatedText}`;
+                if (settings.line === 's') {
+                    formattedBlock += `${originalText}\n${translatedText}`;
+                } else {
+                    formattedBlock += `${translatedText}\n${originalText}`;
+                }
         }
     } else {
-        formattedBlock += `${originalText}\n${translatedText}`;
+        if (settings.line === 's') {
+            formattedBlock += `${originalText}\n${translatedText}`;
+        } else {
+            formattedBlock += `${translatedText}\n${originalText}`;
+        }
     }
     
     return formattedBlock;
@@ -92,41 +119,62 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
     const dialogueLines = lines.slice(lines.indexOf(timing) + 1);
     const dialogue = dialogueLines.join(' ').trim();
 
+    // 检查是否为空或只有标点
     if (!dialogue || dialogue.match(/^[.,!?，。！？\s]+$/)) {
         translatedBlocks[index] = block;
         finishIfDone();
         return;
     }
 
-    const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(dialogue);
+    // 移除重复的标记（如 "Text: Text:"）
+    const cleanDialogue = dialogue.replace(/^(.*?):\s*\1:\s*/, '$1: ');
+    
+    // 检查是否为音效描述
+    const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(cleanDialogue);
     
     if (isSoundEffect && settings.translate_sound) {
-        const textToTranslate = dialogue.replace(/[\[\(\)\]]/g, '').trim();
+        const textToTranslate = cleanDialogue.replace(/[\[\(\)\]]/g, '').trim();
         handleTranslationRequest(textToTranslate, (translated) => {
             if (translated) {
-                translatedBlocks[index] = formatSubtitleBlock(timing, dialogue, `(${translated})`);
+                translatedBlocks[index] = formatSubtitleBlock(timing, cleanDialogue, `(${translated})`);
             } else {
                 translatedBlocks[index] = block;
             }
             finishIfDone();
         });
-    } else if (!isSoundEffect) {
-        const speakerMatch = dialogue.match(/^([^:：]+)[:\s]/);
-        const speaker = speakerMatch ? speakerMatch[1] : '';
-        const text = speakerMatch ? dialogue.replace(/^[^:：]+[:：]\s*/, '') : dialogue;
-
-        handleTranslationRequest(text, (translated) => {
-            if (translated) {
-                translatedBlocks[index] = formatSubtitleBlock(timing, text, translated, speaker);
-            } else {
-                translatedBlocks[index] = block;
-            }
-            finishIfDone();
-        });
-    } else {
-        translatedBlocks[index] = block;
-        finishIfDone();
+        return;
     }
+
+    // 处理普通对话
+    const speakerMatch = cleanDialogue.match(/^([^:：]+)[:\s]/);
+    let speaker = '';
+    let textToTranslate = cleanDialogue;
+
+    if (speakerMatch) {
+        speaker = speakerMatch[1];
+        textToTranslate = cleanDialogue.replace(/^[^:：]+[:：]\s*/, '');
+    }
+
+    handleTranslationRequest(textToTranslate, (translated) => {
+        if (translated) {
+            if (speaker) {
+                translatedBlocks[index] = formatSubtitleBlock(
+                    timing,
+                    `${speaker}: ${textToTranslate}`,
+                    `${speaker}: ${translated}`
+                );
+            } else {
+                translatedBlocks[index] = formatSubtitleBlock(
+                    timing,
+                    textToTranslate,
+                    translated
+                );
+            }
+        } else {
+            translatedBlocks[index] = block;
+        }
+        finishIfDone();
+    });
 }
 
 function processSubtitles(body) {
@@ -135,26 +183,41 @@ function processSubtitles(body) {
         return;
     }
 
-    const header = "WEBVTT\n\n";
-    body = body.replace(/^WEBVTT\n/, '').trim();
-    const subtitleBlocks = body.split('\n\n').filter(block => block.trim());
-    const translatedBlocks = new Array(subtitleBlocks.length);
-    let pendingTranslations = subtitleBlocks.length;
+    try {
+        const header = "WEBVTT\n\n";
+        body = body.replace(/^WEBVTT\n/, '').trim();
+        const subtitleBlocks = body.split('\n\n').filter(block => block.trim());
+        const translatedBlocks = new Array(subtitleBlocks.length);
+        let pendingTranslations = subtitleBlocks.length;
 
-    const finishIfDone = () => {
-        pendingTranslations--;
-        if (pendingTranslations <= 0) {
-            const finalBody = header + translatedBlocks.join('\n\n') + '\n';
-            $done({ body: finalBody });
-        }
-    };
+        const finishIfDone = () => {
+            pendingTranslations--;
+            if (pendingTranslations <= 0) {
+                const finalBody = header + translatedBlocks.join('\n\n') + '\n';
+                $done({ 
+                    body: finalBody,
+                    headers: {
+                        'Content-Type': 'text/vtt;charset=utf-8'
+                    }
+                });
+            }
+        };
 
-    subtitleBlocks.forEach((block, index) => {
-        processBlock(block, index, translatedBlocks, finishIfDone);
-    });
+        subtitleBlocks.forEach((block, index) => {
+            processBlock(block, index, translatedBlocks, finishIfDone);
+        });
+    } catch (e) {
+        console.log('处理字幕时发生错误:', e);
+        $done({});
+    }
 }
 
+// 主处理逻辑
 if (url.includes('.vtt')) {
+    if (!$response.headers['content-type'].includes('vtt')) {
+        $done({});
+        return;
+    }
     processSubtitles($response.body);
 } else if (url.includes('.m3u8')) {
     $done({});
