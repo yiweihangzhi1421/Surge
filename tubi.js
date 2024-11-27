@@ -1,12 +1,3 @@
-/*
-[Script]
-Tubi-Dualsub = type=http-response,pattern=^https?:\/\/s\.adrise\.tv\/.+\.(vtt|m3u8),requires-body=1,max-size=0,timeout=30,script-path=Tubi-Dualsub.js
-Tubi-Dualsub-Setting = type=http-request,pattern=^https?:\/\/setting\.adrise\.tv\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Tubi-Dualsub.js
-
-[MITM]
-hostname = %APPEND% *.adrise.tv
-*/
-
 const url = $request.url;
 const headers = $request.headers;
 
@@ -18,7 +9,9 @@ const default_settings = {
     skip_brackets: false,
     translate_sound: true,
     speaker_format: "prefix",
-    dkey: "null"       
+    dkey: "null",
+    batch_size: 3,      // 批处理大小
+    delay: 500         // 请求间隔(毫秒)
 };
 
 // 读取设置
@@ -30,46 +23,113 @@ if (!settings) {
     settings = JSON.parse(settings);
     if (settings.translate_sound === undefined) {
         settings.translate_sound = true;
-        $persistentStore.write(JSON.stringify(settings), 'tubi_settings');
     }
+    if (settings.batch_size === undefined) {
+        settings.batch_size = 3;
+    }
+    if (settings.delay === undefined) {
+        settings.delay = 500;
+    }
+    $persistentStore.write(JSON.stringify(settings), 'tubi_settings');
 }
 
-function handleTranslationRequest(text, callback) {
-    if (!text.trim()) {
-        callback('');
-        return;
+// 翻译队列管理器
+class TranslationQueue {
+    constructor(batchSize = 3, delay = 500) {
+        this.queue = [];
+        this.running = false;
+        this.batchSize = batchSize;
+        this.delay = delay;
+        this.activeRequests = 0;
     }
 
-    const encodedText = encodeURIComponent(text);
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}&q=${encodedText}`;
-
-    $httpClient.get({
-        url: url,
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    add(text, callback) {
+        this.queue.push({ text, callback });
+        if (!this.running) {
+            this.processQueue();
         }
-    }, function(error, response, data) {
-        if (error) {
-            console.log(`翻译请求错误: ${JSON.stringify(error)}`);
-            callback('');
-            return;
-        }
+    }
 
-        try {
-            const result = JSON.parse(data);
-            if (result && result[0] && result[0][0]) {
-                const translated = result[0][0][0];
-                callback(translated);
-            } else {
-                console.log('翻译结果解析失败:', data);
-                callback('');
+    async processQueue() {
+        this.running = true;
+
+        while (this.queue.length > 0 && this.activeRequests < this.batchSize) {
+            const item = this.queue.shift();
+            this.activeRequests++;
+
+            try {
+                const translated = await this.translateWithRetry(item.text);
+                item.callback(translated);
+            } catch (error) {
+                console.log('翻译失败:', error);
+                item.callback('');
+            } finally {
+                this.activeRequests--;
             }
-        } catch (e) {
-            console.log('翻译解析错误:', e, '原始数据:', data);
-            callback('');
+
+            // 添加延迟
+            await new Promise(resolve => setTimeout(resolve, this.delay));
         }
-    });
+
+        if (this.queue.length > 0) {
+            setTimeout(() => this.processQueue(), this.delay);
+        } else {
+            this.running = false;
+        }
+    }
+
+    async translateWithRetry(text, maxRetries = 3) {
+        let retries = 0;
+        while (retries < maxRetries) {
+            try {
+                return await this.translate(text);
+            } catch (error) {
+                retries++;
+                if (retries === maxRetries) throw error;
+                // 指数退避延迟
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 1000));
+            }
+        }
+    }
+
+    translate(text) {
+        return new Promise((resolve, reject) => {
+            if (!text.trim()) {
+                resolve('');
+                return;
+            }
+
+            const options = {
+                url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
+                headers: {
+                    'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)'
+                },
+                body: `q=${encodeURIComponent(text)}`
+            };
+
+            $httpClient.post(options, function(error, response, data) {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                try {
+                    const result = JSON.parse(data);
+                    if (result.sentences) {
+                        const translated = result.sentences.map(s => s.trans).join('').trim();
+                        resolve(translated);
+                    } else {
+                        resolve('');
+                    }
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+    }
 }
+
+// 创建翻译队列实例
+const translationQueue = new TranslationQueue(settings.batch_size, settings.delay);
 
 function formatSubtitleBlock(timing, originalText, translatedText, speaker = '') {
     let formattedBlock = timing + '\n';
@@ -77,12 +137,6 @@ function formatSubtitleBlock(timing, originalText, translatedText, speaker = '')
     if (speaker) {
         switch (settings.speaker_format) {
             case "prefix":
-                if (settings.line === 's') {
-                    formattedBlock += `${originalText}\n${translatedText}`;
-                } else {
-                    formattedBlock += `${translatedText}\n${originalText}`;
-                }
-                break;
             case "append":
                 if (settings.line === 's') {
                     formattedBlock += `${originalText}\n${translatedText}`;
@@ -127,15 +181,12 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
         return;
     }
 
-    // 移除重复的标记（如 "Text: Text:"）
     const cleanDialogue = dialogue.replace(/^(.*?):\s*\1:\s*/, '$1: ');
-    
-    // 检查是否为音效描述
     const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(cleanDialogue);
     
     if (isSoundEffect && settings.translate_sound) {
         const textToTranslate = cleanDialogue.replace(/[\[\(\)\]]/g, '').trim();
-        handleTranslationRequest(textToTranslate, (translated) => {
+        translationQueue.add(textToTranslate, (translated) => {
             if (translated) {
                 translatedBlocks[index] = formatSubtitleBlock(timing, cleanDialogue, `(${translated})`);
             } else {
@@ -144,7 +195,6 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
             finishIfDone();
         });
     } else {
-        // 处理普通对话
         const speakerMatch = cleanDialogue.match(/^([^:：]+)[:\s]/);
         let speaker = '';
         let textToTranslate = cleanDialogue;
@@ -154,7 +204,7 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
             textToTranslate = cleanDialogue.replace(/^[^:：]+[:：]\s*/, '');
         }
 
-        handleTranslationRequest(textToTranslate, (translated) => {
+        translationQueue.add(textToTranslate, (translated) => {
             if (translated) {
                 if (speaker) {
                     translatedBlocks[index] = formatSubtitleBlock(
