@@ -108,49 +108,53 @@ else if (url.match(/\.vtt/)) {
     
     if (timeline.length > 0 && subtitles.length > 0) {
         // 创建所有翻译请求的Promise数组
-        let promises = subtitles.map(function(text) {
+        let promises = subtitles.map(function(text, index) {
             return new Promise(function(resolve) {
                 if (!text.trim()) {
                     resolve("");
                     return;
                 }
                 
-                let translateUrl = buildGoogleTranslateUrl(text, setting.sl, setting.tl);
-                console.log("Translating:", text);
-                console.log("Translation URL:", translateUrl);
-                
-                $httpClient.get({
-                    url: translateUrl,
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        'Accept': 'application/json, text/javascript, */*; q=0.01'
-                    }
-                }, function(error, response, data) {
-                    if (error) {
-                        console.error("Translation request failed:", error);
-                        resolve(text);
-                        return;
-                    }
+                // 添加延迟以避免请求过于密集
+                setTimeout(function() {
+                    let translateUrl = buildGoogleTranslateUrl(text, setting.sl, setting.tl);
+                    console.log(`\nTranslating [${index + 1}/${subtitles.length}]: "${text}"`);
+                    console.log(`Translation URL: ${translateUrl}\n`);
                     
-                    try {
-                        let result = JSON.parse(data);
-                        if (result && result[0]) {
-                            let translatedText = "";
-                            for (let j = 0; j < result[0].length; j++) {
-                                if (result[0][j][0]) {
-                                    translatedText += result[0][j][0];
+                    $httpClient.get({
+                        url: translateUrl,
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                            'Accept': 'application/json, text/javascript, */*; q=0.01'
+                        }
+                    }, function(error, response, data) {
+                        if (error) {
+                            console.error("Translation request failed:", error);
+                            resolve(text);
+                            return;
+                        }
+                        
+                        try {
+                            let result = JSON.parse(data);
+                            if (result && result[0]) {
+                                let translatedText = "";
+                                for (let j = 0; j < result[0].length; j++) {
+                                    if (result[0][j][0]) {
+                                        translatedText += result[0][j][0];
+                                    }
                                 }
+                                console.log(`[${index + 1}/${subtitles.length}] Translated: "${translatedText}"`);
+                                resolve(translatedText || text);
+                            } else {
+                                console.log(`[${index + 1}/${subtitles.length}] No translation result, keeping original`);
+                                resolve(text);
                             }
-                            console.log(`Original: "${text}", Translated: "${translatedText}"`);
-                            resolve(translatedText || text);
-                        } else {
+                        } catch (e) {
+                            console.error(`[${index + 1}/${subtitles.length}] Failed to parse translation response:`, e);
                             resolve(text);
                         }
-                    } catch (e) {
-                        console.error("Failed to parse translation response:", e);
-                        resolve(text);
-                    }
-                });
+                    });
+                }, index * 100); // 每个请求间隔100毫秒
             });
         });
         
