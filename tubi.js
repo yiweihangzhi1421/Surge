@@ -20,8 +20,7 @@ const default_settings = {
     skip_brackets: false,
     translate_sound: true,
     speaker_format: "prefix",
-    dkey: "null",
-    batch_size: 5      // 新增: 批量处理大小
+    dkey: "null"
 };
 
 let settings = $persistentStore.read('tubi_settings');
@@ -36,62 +35,69 @@ if (!settings) {
     }
 }
 
-// 新增: 延迟函数
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
+// 缓存已翻译的文本
+const translationCache = new Map();
 
-// 修改: 翻译请求处理
-async function handleTranslationRequest(text) {
-    return new Promise((resolve) => {
-        const cleanText = text.replace(/:\s*:/g, ':').trim();
-        if (!cleanText) {
-            resolve('');
+function handleTranslationRequest(text, callback) {
+    // 检查缓存
+    if (translationCache.has(text)) {
+        callback(translationCache.get(text));
+        return;
+    }
+
+    // 清理文本
+    text = text.replace(/:\s*:/g, ':').trim();
+    if (!text) {
+        callback('');
+        return;
+    }
+
+    const options = {
+        url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
+        headers: {
+            'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)'
+        },
+        body: `q=${encodeURIComponent(text)}`
+    };
+
+    $httpClient.post(options, function(error, response, data) {
+        if (error) {
+            callback('');
             return;
         }
-
-        const options = {
-            url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
-            headers: {
-                'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)'
-            },
-            body: `q=${encodeURIComponent(cleanText)}`
-        };
-
-        $httpClient.post(options, function(error, response, data) {
-            if (error) {
-                resolve('');
-                return;
+        try {
+            const result = JSON.parse(data);
+            if (result.sentences) {
+                const translated = result.sentences.map(s => s.trans).join('').trim();
+                // 存入缓存
+                translationCache.set(text, translated);
+                callback(translated);
+            } else {
+                callback('');
             }
-            try {
-                const result = JSON.parse(data);
-                if (result.sentences) {
-                    const translated = result.sentences.map(s => s.trans).join('').trim();
-                    resolve(translated);
-                } else {
-                    resolve('');
-                }
-            } catch (e) {
-                resolve('');
-            }
-        });
+        } catch (e) {
+            callback('');
+        }
     });
 }
 
-// 修改: 字幕块处理
-async function processBlock(block) {
+function processBlock(block, index, translatedBlocks, finishIfDone) {
     const lines = block.split('\n');
     const timing = lines.find(line => line.includes(' --> '));
     
     if (!timing) {
-        return block;
+        translatedBlocks[index] = block;
+        finishIfDone();
+        return;
     }
 
     const dialogueLines = lines.slice(lines.indexOf(timing) + 1);
     const dialogue = dialogueLines.join('\n').trim();
 
     if (!dialogue || dialogue.match(/^[.,!?，。！？\s]+$/)) {
-        return block;
+        translatedBlocks[index] = block;
+        finishIfDone();
+        return;
     }
 
     // 处理说话者名字和对话
@@ -104,30 +110,40 @@ async function processBlock(block) {
         textToTranslate = dialogue.substring(speakerMatch[0].length).trim();
     }
 
-    // 音效特殊处理
-    if (/^\([^)]+\)$/.test(dialogue) || /^\[[^\]]+\]$/.test(dialogue)) {
+    // 快速判断是否为音效
+    const isSoundEffect = /^\([^)]+\)$/.test(dialogue) || /^\[[^\]]+\]$/.test(dialogue);
+    
+    if (isSoundEffect) {
         if (!settings.translate_sound) {
-            return block;
+            translatedBlocks[index] = block;
+            finishIfDone();
+            return;
         }
+        
         const soundText = dialogue.replace(/[\[\(\)\]]/g, '').trim();
-        const translated = await handleTranslationRequest(soundText);
-        return translated ? `${timing}\n${dialogue}\n(${translated})` : block;
+        handleTranslationRequest(soundText, (translated) => {
+            translatedBlocks[index] = translated ? 
+                `${timing}\n${dialogue}\n(${translated})` : block;
+            finishIfDone();
+        });
+        return;
     }
 
-    const translated = await handleTranslationRequest(textToTranslate);
-    if (!translated) {
-        return block;
-    }
-
-    if (speaker) {
-        return `${timing}\n${speaker}: ${textToTranslate}\n${speaker}: ${translated}`;
-    } else {
-        return `${timing}\n${dialogue}\n${translated}`;
-    }
+    handleTranslationRequest(textToTranslate, (translated) => {
+        if (!translated) {
+            translatedBlocks[index] = block;
+        } else {
+            if (speaker) {
+                translatedBlocks[index] = `${timing}\n${speaker}: ${textToTranslate}\n${speaker}: ${translated}`;
+            } else {
+                translatedBlocks[index] = `${timing}\n${dialogue}\n${translated}`;
+            }
+        }
+        finishIfDone();
+    });
 }
 
-// 修改: 字幕处理主函数
-async function processSubtitles(body) {
+function processSubtitles(body) {
     if (settings.type === "Disable" || !body) {
         $done({});
         return;
@@ -137,27 +153,43 @@ async function processSubtitles(body) {
     body = body.replace(/^WEBVTT\n/, '').trim();
     
     const subtitleBlocks = body.split('\n\n').filter(block => block.trim());
-    const translatedBlocks = [];
+    const translatedBlocks = new Array(subtitleBlocks.length);
+    let pendingTranslations = subtitleBlocks.length;
     
-    // 批量处理字幕块
-    for (let i = 0; i < subtitleBlocks.length; i += settings.batch_size) {
-        const batch = subtitleBlocks.slice(i, i + settings.batch_size);
-        const batchPromises = batch.map(block => processBlock(block));
-        
-        try {
-            const results = await Promise.all(batchPromises);
-            translatedBlocks.push(...results);
-            // 添加延迟以避免请求过快
-            if (i + settings.batch_size < subtitleBlocks.length) {
-                await delay(300);
-            }
-        } catch (error) {
-            console.error('Error processing batch:', error);
-        }
+    // 创建批处理数组
+    const batchSize = 3; // 每次处理3个字幕块
+    const batches = [];
+    
+    for (let i = 0; i < subtitleBlocks.length; i += batchSize) {
+        batches.push(subtitleBlocks.slice(i, i + batchSize));
     }
 
-    const result = header + translatedBlocks.join('\n\n') + '\n';
-    $done({ body: result });
+    let currentBatch = 0;
+
+    const processNextBatch = () => {
+        if (currentBatch >= batches.length) {
+            return;
+        }
+
+        const batch = batches[currentBatch];
+        batch.forEach((block, batchIndex) => {
+            const globalIndex = currentBatch * batchSize + batchIndex;
+            processBlock(block, globalIndex, translatedBlocks, () => {
+                pendingTranslations--;
+                if (pendingTranslations <= 0) {
+                    const result = header + translatedBlocks.join('\n\n') + '\n';
+                    $done({ body: result });
+                }
+            });
+        });
+
+        currentBatch++;
+        if (currentBatch < batches.length) {
+            setTimeout(processNextBatch, 100); // 100ms延迟处理下一批
+        }
+    };
+
+    processNextBatch();
 }
 
 // 主处理逻辑
