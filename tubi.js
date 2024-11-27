@@ -1,12 +1,3 @@
-/*
-[Script]
-Tubi-Dualsub = type=http-response,pattern=^https?:\/\/s\.adrise\.tv\/.+\.(vtt|m3u8),requires-body=1,max-size=0,timeout=30,script-path=Tubi-Dualsub.js
-Tubi-Dualsub-Setting = type=http-request,pattern=^https?:\/\/setting\.adrise\.tv\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Tubi-Dualsub.js
-
-[MITM]
-hostname = %APPEND% *.adrise.tv
-*/
-
 const url = $request.url;
 const headers = $request.headers;
 
@@ -119,7 +110,6 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
     const dialogueLines = lines.slice(lines.indexOf(timing) + 1);
     const dialogue = dialogueLines.join(' ').trim();
 
-    // 检查是否为空或只有标点
     if (!dialogue || dialogue.match(/^[.,!?，。！？\s]+$/)) {
         translatedBlocks[index] = block;
         finishIfDone();
@@ -142,39 +132,38 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
             }
             finishIfDone();
         });
-        return;
-    }
+    } else {
+        // 处理普通对话
+        const speakerMatch = cleanDialogue.match(/^([^:：]+)[:\s]/);
+        let speaker = '';
+        let textToTranslate = cleanDialogue;
 
-    // 处理普通对话
-    const speakerMatch = cleanDialogue.match(/^([^:：]+)[:\s]/);
-    let speaker = '';
-    let textToTranslate = cleanDialogue;
-
-    if (speakerMatch) {
-        speaker = speakerMatch[1];
-        textToTranslate = cleanDialogue.replace(/^[^:：]+[:：]\s*/, '');
-    }
-
-    handleTranslationRequest(textToTranslate, (translated) => {
-        if (translated) {
-            if (speaker) {
-                translatedBlocks[index] = formatSubtitleBlock(
-                    timing,
-                    `${speaker}: ${textToTranslate}`,
-                    `${speaker}: ${translated}`
-                );
-            } else {
-                translatedBlocks[index] = formatSubtitleBlock(
-                    timing,
-                    textToTranslate,
-                    translated
-                );
-            }
-        } else {
-            translatedBlocks[index] = block;
+        if (speakerMatch) {
+            speaker = speakerMatch[1];
+            textToTranslate = cleanDialogue.replace(/^[^:：]+[:：]\s*/, '');
         }
-        finishIfDone();
-    });
+
+        handleTranslationRequest(textToTranslate, (translated) => {
+            if (translated) {
+                if (speaker) {
+                    translatedBlocks[index] = formatSubtitleBlock(
+                        timing,
+                        `${speaker}: ${textToTranslate}`,
+                        `${speaker}: ${translated}`
+                    );
+                } else {
+                    translatedBlocks[index] = formatSubtitleBlock(
+                        timing,
+                        textToTranslate,
+                        translated
+                    );
+                }
+            } else {
+                translatedBlocks[index] = block;
+            }
+            finishIfDone();
+        });
+    }
 }
 
 function processSubtitles(body) {
@@ -214,10 +203,6 @@ function processSubtitles(body) {
 
 // 主处理逻辑
 if (url.includes('.vtt')) {
-    if (!$response.headers['content-type'].includes('vtt')) {
-        $done({});
-        return;
-    }
     processSubtitles($response.body);
 } else if (url.includes('.m3u8')) {
     $done({});
