@@ -139,9 +139,8 @@ function rebuildVTT(timeline, original, translated, line) {
     return result;
 }
 
-// 主处理流程
-if (url.match(/\.m3u8/)) {
-    let body = $response.body;
+// 处理m3u8文件
+function processM3U8(body) {
     console.log("Processing m3u8 file");
     
     let patt = /#EXTINF:.+\n([^\n]+\.vtt)/;
@@ -155,42 +154,50 @@ if (url.match(/\.m3u8/)) {
     }
     
     $done({ body });
-} else if (url.match(/\.vtt/)) {
-    let body = $response.body;
+}
+
+// 处理VTT文件
+function processVTT(body) {
     console.log("Processing VTT file");
     console.log("Settings:", JSON.stringify(setting));
     
     if (setting.type === "Disable" || !body || body.trim() === "") {
         $done({ body });
-        return;
-    }
-    
-    let lines = body.split("\n");
-    let timelineRegex = /\d{2}:\d{2}.\d{3} --> \d{2}:\d{2}.\d{3}/;
-    let timeline = [];
-    let subtitles = [];
-    
-    for (let i = 0; i < lines.length; i++) {
-        if (timelineRegex.test(lines[i])) {
-            timeline.push(lines[i]);
-            subtitles.push(lines[i + 1]?.trim() || "");
-            i++;
+    } else {
+        let lines = body.split("\n");
+        let timelineRegex = /\d{2}:\d{2}.\d{3} --> \d{2}:\d{2}.\d{3}/;
+        let timeline = [];
+        let subtitles = [];
+        
+        for (let i = 0; i < lines.length; i++) {
+            if (timelineRegex.test(lines[i])) {
+                timeline.push(lines[i]);
+                subtitles.push(lines[i + 1]?.trim() || "");
+                i++;
+            }
+        }
+        
+        console.log("Found subtitles:", subtitles.length);
+        
+        if (timeline.length > 0 && subtitles.length > 0) {
+            translateSubtitles(subtitles, setting.type, setting.sl, setting.tl).then(function(translated) {
+                let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
+                $done({ body: translatedBody });
+            }).then(null, function(error) {
+                console.error("Translation error:", error);
+                $done({ body });
+            });
+        } else {
+            $done({ body });
         }
     }
-    
-    console.log("Found subtitles:", subtitles.length);
-    
-    if (timeline.length > 0 && subtitles.length > 0) {
-        translateSubtitles(subtitles, setting.type, setting.sl, setting.tl).then(function(translated) {
-            let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
-            $done({ body: translatedBody });
-        }).then(null, function(error) {
-            console.error("Translation error:", error);
-            $done({ body });
-        });
-    } else {
-        $done({ body });
-    }
+}
+
+// 主处理流程
+if (url.match(/\.m3u8/)) {
+    processM3U8($response.body);
+} else if (url.match(/\.vtt/)) {
+    processVTT($response.body);
 } else {
     $done({});
 }
