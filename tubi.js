@@ -25,41 +25,55 @@ if (!settings) {
     }
 }
 
-function handleTranslationRequest(text, callback) {
-    if (!text.trim()) {
-        callback('');
-        return;
-    }
+// 翻译队列管理器
+let translationQueue = [];
+let isProcessingQueue = false;
+const QUEUE_DELAY = 300; // 请求间隔(毫秒)
 
+function processQueue() {
+    if (!translationQueue.length || isProcessingQueue) return;
+    
+    isProcessingQueue = true;
+    const task = translationQueue.shift();
+    
     const options = {
         url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
         headers: {
             'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)'
         },
-        body: `q=${encodeURIComponent(text)}`
+        body: `q=${encodeURIComponent(task.text)}`
     };
 
     $httpClient.post(options, function(error, response, data) {
-        if (error) {
-            // 出错时返回空字符串但不中断处理
-            console.log('翻译请求错误，继续处理:', error);
-            callback('');
-            return;
-        }
-        try {
-            const result = JSON.parse(data);
-            if (result.sentences) {
-                const translated = result.sentences.map(s => s.trans).join('').trim();
-                callback(translated);
-            } else {
-                callback('');
+        let result = '';
+        if (!error) {
+            try {
+                const parsed = JSON.parse(data);
+                if (parsed.sentences) {
+                    result = parsed.sentences.map(s => s.trans).join('').trim();
+                }
+            } catch (e) {
+                console.log('翻译解析错误:', e);
             }
-        } catch (e) {
-            // 解析错误时返回空字符串但不中断处理
-            console.log('翻译解析错误，继续处理:', e);
-            callback('');
+        } else {
+            console.log('翻译请求错误:', error);
         }
+        
+        task.callback(result);
+        
+        isProcessingQueue = false;
+        setTimeout(processQueue, QUEUE_DELAY);
     });
+}
+
+function handleTranslationRequest(text, callback) {
+    if (!text.trim()) {
+        callback('');
+        return;
+    }
+    
+    translationQueue.push({ text, callback });
+    processQueue();
 }
 
 function formatSubtitleBlock(timing, originalText, translatedText, speaker = '') {
@@ -118,10 +132,7 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
         return;
     }
 
-    // 移除重复的标记
     const cleanDialogue = dialogue.replace(/^(.*?):\s*\1:\s*/, '$1: ');
-    
-    // 检查是否为音效描述
     const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(cleanDialogue);
     
     if (isSoundEffect && settings.translate_sound) {
@@ -130,13 +141,11 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
             if (translated) {
                 translatedBlocks[index] = formatSubtitleBlock(timing, cleanDialogue, `(${translated})`);
             } else {
-                // 翻译失败时保留原文
                 translatedBlocks[index] = block;
             }
             finishIfDone();
         });
     } else {
-        // 处理普通对话
         const speakerMatch = cleanDialogue.match(/^([^:：]+)[:：]\s*/);
         let speaker = '';
         let textToTranslate = cleanDialogue;
@@ -162,7 +171,6 @@ function processBlock(block, index, translatedBlocks, finishIfDone) {
                     );
                 }
             } else {
-                // 翻译失败时保留原文
                 translatedBlocks[index] = block;
             }
             finishIfDone();
@@ -186,7 +194,6 @@ function processSubtitles(body) {
         const finishIfDone = () => {
             pendingTranslations--;
             if (pendingTranslations <= 0) {
-                // 所有块都处理完成后，过滤掉undefined的块并拼接
                 const finalBody = header + translatedBlocks.filter(block => block !== undefined).join('\n\n') + '\n';
                 $done({ 
                     body: finalBody,
@@ -197,7 +204,6 @@ function processSubtitles(body) {
             }
         };
 
-        // 按顺序处理每个字幕块
         subtitleBlocks.forEach((block, index) => {
             processBlock(block, index, translatedBlocks, finishIfDone);
         });
