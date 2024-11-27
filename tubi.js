@@ -34,7 +34,7 @@ let service = "Tubi";
 if (!settings[service]) settings[service] = default_settings[service];
 let setting = settings[service];
 
-// 构建Google翻译URL
+// 构建翻译URL
 function buildGoogleTranslateUrl(text, sl, tl) {
     let baseUrl = "https://translate.googleapis.com/translate_a/single";
     let params = [
@@ -47,100 +47,25 @@ function buildGoogleTranslateUrl(text, sl, tl) {
     return baseUrl + "?" + params;
 }
 
-// HTTP 请求封装
-function sendRequest(options) {
-    return new Promise(function(resolve) {
-        $task.fetch(options).then(function(response) {
-            try {
-                let result = JSON.parse(response.body);
-                resolve(result);
-            } catch (e) {
-                console.error("Parse response failed:", e);
-                resolve(null);
-            }
-        }).then(null, function(error) {
-            console.error("Request failed:", error);
-            resolve(null);
-        });
-    });
-}
-
-// 翻译字幕文本
-async function translateSubtitles(subtitles, engine, sl, tl) {
-    let translated = [];
-    let i = 0;
-    
-    if (engine === "Google") {
-        for (i = 0; i < subtitles.length; i++) {
-            if (!subtitles[i].trim()) {
-                translated.push("");
-                continue;
-            }
-
-            let url = buildGoogleTranslateUrl(subtitles[i], sl, tl);
-            console.log("Translating:", subtitles[i]);
-            console.log("URL:", url);
-
-            let options = {
-                url: url,
-                method: "GET",
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            };
-
-            let response = await sendRequest(options);
-            console.log("Response:", JSON.stringify(response));
-            
-            if (response && response[0]) {
-                let translatedText = "";
-                for (let j = 0; j < response[0].length; j++) {
-                    if (response[0][j][0]) {
-                        translatedText += response[0][j][0];
-                    }
-                }
-                console.log("Translated:", translatedText);
-                translated.push(translatedText || subtitles[i]);
-            } else {
-                translated.push(subtitles[i]);
-            }
-        }
-    }
-    
-    return translated;
-}
-
 // 重建 WebVTT 文件
 function rebuildVTT(timeline, original, translated, line) {
     let result = "WEBVTT\n\n";
-    console.log("Rebuilding VTT with:", {
-        timelineCount: timeline.length,
-        originalCount: original.length,
-        translatedCount: translated.length,
-        lineOrder: line
-    });
+    console.log("Rebuilding VTT with line order:", line);
 
     for (let i = 0; i < timeline.length; i++) {
         result += timeline[i] + "\n";
         if (line === "s") {
-            console.log("Subtitle pair " + (i + 1) + ":", {
-                original: original[i],
-                translated: translated[i]
-            });
             result += original[i] + "\n" + translated[i] + "\n\n";
         } else if (line === "f") {
-            console.log("Subtitle pair " + (i + 1) + ":", {
-                translated: translated[i],
-                original: original[i]
-            });
             result += translated[i] + "\n" + original[i] + "\n\n";
         }
     }
     return result;
 }
 
-// 处理m3u8文件
-function processM3U8(body) {
+// 处理 m3u8 文件
+if (url.match(/\.m3u8/)) {
+    let body = $response.body;
     console.log("Processing m3u8 file");
     
     let patt = /#EXTINF:.+\n([^\n]+\.vtt)/;
@@ -156,48 +81,86 @@ function processM3U8(body) {
     $done({ body });
 }
 
-// 处理VTT文件
-function processVTT(body) {
+// 处理 vtt 文件
+else if (url.match(/\.vtt/)) {
+    let body = $response.body;
     console.log("Processing VTT file");
-    console.log("Settings:", JSON.stringify(setting));
+    console.log("Current settings:", JSON.stringify(setting));
     
     if (setting.type === "Disable" || !body || body.trim() === "") {
         $done({ body });
-    } else {
-        let lines = body.split("\n");
-        let timelineRegex = /\d{2}:\d{2}.\d{3} --> \d{2}:\d{2}.\d{3}/;
-        let timeline = [];
-        let subtitles = [];
-        
-        for (let i = 0; i < lines.length; i++) {
-            if (timelineRegex.test(lines[i])) {
-                timeline.push(lines[i]);
-                subtitles.push(lines[i + 1]?.trim() || "");
-                i++;
+    }
+    
+    let lines = body.split("\n");
+    let timelineRegex = /\d{2}:\d{2}.\d{3} --> \d{2}:\d{2}.\d{3}/;
+    let timeline = [];
+    let subtitles = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+        if (timelineRegex.test(lines[i])) {
+            timeline.push(lines[i]);
+            subtitles.push(lines[i + 1]?.trim() || "");
+            i++;
+        }
+    }
+    
+    console.log("Found subtitles:", subtitles.length);
+    
+    if (timeline.length > 0 && subtitles.length > 0) {
+        // 翻译所有字幕
+        let pendingTranslations = subtitles.map(function(text, index) {
+            if (!text.trim()) {
+                return Promise.resolve("");
             }
-        }
-        
-        console.log("Found subtitles:", subtitles.length);
-        
-        if (timeline.length > 0 && subtitles.length > 0) {
-            translateSubtitles(subtitles, setting.type, setting.sl, setting.tl).then(function(translated) {
-                let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
-                $done({ body: translatedBody });
-            }).then(null, function(error) {
-                console.error("Translation error:", error);
-                $done({ body });
+            
+            let url = buildGoogleTranslateUrl(text, setting.sl, setting.tl);
+            let options = {
+                url: url,
+                method: "GET",
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            };
+            
+            console.log("Translating:", text);
+            console.log("Translation URL:", url);
+            
+            return $task.fetch(options).then(function(response) {
+                try {
+                    let result = JSON.parse(response.body);
+                    if (result && result[0]) {
+                        let translatedText = "";
+                        for (let j = 0; j < result[0].length; j++) {
+                            if (result[0][j][0]) {
+                                translatedText += result[0][j][0];
+                            }
+                        }
+                        console.log("Translated text:", translatedText);
+                        return translatedText || text;
+                    }
+                    return text;
+                } catch (e) {
+                    console.error("Translation error:", e);
+                    return text;
+                }
+            }).then(null, function() {
+                return text;
             });
-        } else {
+        });
+        
+        Promise.all(pendingTranslations).then(function(translated) {
+            let translatedBody = rebuildVTT(timeline, subtitles, translated, setting.line);
+            $done({ body: translatedBody });
+        }).then(null, function(error) {
+            console.error("Translation failed:", error);
             $done({ body });
-        }
+        });
+    } else {
+        $done({ body });
     }
 }
 
-// 主处理流程
-if (url.match(/\.m3u8/)) {
-    processM3U8($response.body);
-} else if (url.match(/\.vtt/)) {
-    processVTT($response.body);
-} else {
+// 其他文件类型
+else {
     $done({});
 }
