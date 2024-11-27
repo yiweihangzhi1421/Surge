@@ -1,3 +1,12 @@
+/*
+[Script]
+Tubi-Dualsub = type=http-response,pattern=^https?:\/\/s\.adrise\.tv\/.+\.(vtt|m3u8),requires-body=1,max-size=0,timeout=30,script-path=Tubi-Dualsub.js
+Tubi-Dualsub-Setting = type=http-request,pattern=^https?:\/\/setting\.adrise\.tv\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Tubi-Dualsub.js
+
+[MITM]
+hostname = %APPEND% *.adrise.tv
+*/
+
 const url = $request.url;
 const headers = $request.headers;
 
@@ -31,30 +40,32 @@ function handleTranslationRequest(text, callback) {
         return;
     }
 
-    const options = {
-        url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.sl}&tl=${settings.tl}`,
-        headers: {
-            'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)'
-        },
-        body: `q=${encodeURIComponent(text)}`
-    };
+    const encodedText = encodeURIComponent(text);
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}&q=${encodedText}`;
 
-    $httpClient.post(options, function(error, response, data) {
+    $httpClient.get({
+        url: url,
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+    }, function(error, response, data) {
         if (error) {
-            console.log('翻译请求错误:', error);
+            console.log(`翻译请求错误: ${JSON.stringify(error)}`);
             callback('');
             return;
         }
+
         try {
             const result = JSON.parse(data);
-            if (result.sentences) {
-                const translated = result.sentences.map(s => s.trans).join('').trim();
+            if (result && result[0] && result[0][0]) {
+                const translated = result[0][0][0];
                 callback(translated);
             } else {
+                console.log('翻译结果解析失败:', data);
                 callback('');
             }
         } catch (e) {
-            console.log('翻译解析错误:', e);
+            console.log('翻译解析错误:', e, '原始数据:', data);
             callback('');
         }
     });
