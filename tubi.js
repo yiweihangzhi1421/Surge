@@ -54,7 +54,7 @@ async function translate(text) {
                 'Accept': '*/*',
                 'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7'
             },
-            timeout: 2000
+            timeout: 1000  // 1秒超时
         }, function(error, response, data) {
             if (error) {
                 console.log('翻译错误:', error);
@@ -99,7 +99,7 @@ async function translateBatch(subtitles, startIndex, batchSize) {
             console.log(`翻译错误 [${globalIndex + 1}]:`, e);
             translations.push(text);
         }
-        await new Promise(resolve => setTimeout(resolve, 150));
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms延迟
     }
     
     return translations;
@@ -152,14 +152,12 @@ async function processRequest() {
                 
                 if (!line || line === "WEBVTT") continue;
                 
-                // 检查是否是时间戳行
                 if (line.match(/^\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}\.\d{3}/)) {
                     if (currentCue) {
-                        currentCue.text = currentCue.text.filter(t => t); // 移除空行
+                        currentCue.text = currentCue.text.filter(t => t);
                         cues.push(currentCue);
                     }
                     currentCue = {
-                        index: cues.length + 1,
                         timing: line,
                         text: []
                     };
@@ -181,41 +179,36 @@ async function processRequest() {
             }
 
             // 处理字幕翻译
-            const BATCH_SIZE = 3;
-            let modifiedCues = [];
+            const BATCH_SIZE = 2;
+            let modifiedContent = "WEBVTT\n\n";
             
             for (let i = 0; i < cues.length; i += BATCH_SIZE) {
                 const batch = cues.slice(i, i + BATCH_SIZE);
                 const textsToTranslate = batch.map(cue => cue.text.join(" "));
                 console.log(`处理批次 ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(cues.length/BATCH_SIZE)}`);
                 
-                const translations = await translateBatch(textsToTranslate, 0, BATCH_SIZE);
+                const translations = await translateBatch(textsToTranslate, i, BATCH_SIZE);
                 
+                // 立即写入当前批次的字幕
                 batch.forEach((cue, index) => {
-                    modifiedCues.push({
-                        index: cue.index,
-                        timing: cue.timing,
-                        text: cue.text,
-                        translation: translations[index]
-                    });
+                    const translation = translations[index];
+                    // 每个字幕块的格式：时间轴 + 原文 + 翻译 + 空行
+                    modifiedContent += cue.timing + "\n";  // 时间轴
+                    modifiedContent += cue.text.join("\n") + "\n";  // 原文（保持原有的换行）
+                    if (translation) {
+                        modifiedContent += translation + "\n";  // 翻译
+                    }
+                    modifiedContent += "\n";  // 空行分隔
                 });
+
+                // 每处理10批显示进度
+                if (i % (BATCH_SIZE * 10) === 0) {
+                    console.log(`已处理 ${i}/${cues.length} 条字幕`);
+                }
             }
 
-            // 重建VTT文件
-            let result = "WEBVTT\n\n";
-            modifiedCues.forEach((cue, index) => {
-                result += `${cue.index}\n`;  // 添加序号
-                result += `${cue.timing}\n`;  // 时间轴
-                const combinedText = cue.text.join(" ");  // 合并多行英文
-                result += `${combinedText}\n`;  // 英文
-                if (cue.translation) {
-                    result += `${cue.translation}\n`;  // 中文
-                }
-                result += "\n";  // 空行分隔
-            });
-
             console.log("字幕重建完成");
-            $done({ body: result });
+            $done({ body: modifiedContent });
             return;
         }
         
