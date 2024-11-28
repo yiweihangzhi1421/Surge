@@ -3,64 +3,46 @@ Tubi Subtitle Translator
 Made by 2024
 */
 
-// 请求相关变量
 const url = $request.url;
-let isRunning = false;
-let currentIndex = 0;
-let subtitleBlocks = [];
-let processedBlocks = [];
 
 // 基础设置
 const default_settings = {
-    type: "Google",    // 翻译类型
-    sl: "auto",        // 源语言
-    tl: "zh",         // 目标语言
-    line: "s",         // 显示顺序：s-原文在上，t-译文在上
-    delay: 1000,       // 请求间隔(毫秒)
-    skip_brackets: false,
-    translate_sound: true,
-    speaker_format: "prefix",
-    dkey: "null"
+    type: "Google",  
+    sl: "auto",       
+    tl: "zh",         
+    line: "s",       
+    delay: 1000      
 };
 
 // 读取设置
 let settings = $persistentStore.read('tubi_settings');
 settings = settings ? {...default_settings, ...JSON.parse(settings)} : default_settings;
 
-// 常见音效列表
+// 基础变量
+let isRunning = false;
+let currentIndex = 0;
+let subtitleBlocks = [];
+let processedBlocks = [];
+
+// 音效和短语检测
 const SOUND_EFFECTS = new Set([
     "(laughter)", "(laughing)", "(laughs)", 
     "(gasps)", "(gasping)", "(gasp)",
-    "(groans)", "(groaning)", "(groan)",
-    "(sighs)", "(sighing)", "(sigh)",
-    "(chuckles)", "(chuckling)", "(chuckle)",
-    "(screams)", "(screaming)", "(scream)",
     "(grunts)", "(grunting)", "(grunt)",
-    "(whispers)", "(whispering)", "(whisper)",
-    "(coughs)", "(coughing)", "(cough)",
-    "(sniffles)", "(sniffling)", "(sniffle)",
-    "(sobs)", "(sobbing)", "(sob)",
-    "(exhales)", "(exhaling)", "(exhale)",
-    "(inhales)", "(inhaling)", "(inhale)",
-    "(pants)", "(panting)", "(pant)",
-    "(clicks)", "(clicking)", "(click)",
-    "(beeps)", "(beeping)", "(beep)",
-    "(buzzes)", "(buzzing)", "(buzz)",
-    "(hisses)", "(hissing)", "(hiss)",
-    "(whirring)", "(whirs)", "(whir)"
+    "(sighs)", "(sighing)", "(sigh)"
 ]);
 
 // 翻译函数
 function translateText(text) {
     return new Promise((resolve) => {
-        if (!text?.trim()) {
+        if (!text?.trim() || text.length < 3) {
             resolve('');
             return;
         }
 
-        // 检查是否为音效且不翻译音效
-        if (!settings.translate_sound && SOUND_EFFECTS.has(text.toLowerCase().trim())) {
-            resolve('');
+        // 检查是否为音效
+        if (SOUND_EFFECTS.has(text.toLowerCase().trim())) {
+            resolve(text);
             return;
         }
 
@@ -77,6 +59,7 @@ function translateText(text) {
                 const translated = result.sentences?.map(s => s.trans).join('').trim();
                 resolve(translated || '');
             } catch (e) {
+                console.log('翻译错误:', e);
                 resolve('');
             }
         });
@@ -87,10 +70,9 @@ function translateText(text) {
 function formatBlock(timing, original, translated) {
     if (!translated) return `${timing}\n${original}`;
     
-    if (settings.line === 's') {
-        return `${timing}\n${original}\n${translated}`;
-    }
-    return `${timing}\n${translated}\n${original}`;
+    return settings.line === 's' 
+        ? `${timing}\n${original}\n${translated}`
+        : `${timing}\n${translated}\n${original}`;
 }
 
 // 处理单个字幕块
@@ -104,36 +86,31 @@ async function processBlock(block) {
         const text = lines.slice(lines.indexOf(timing) + 1).join(' ').trim();
         if (!text) return block;
 
-        // 检查是否为音效
-        const isSoundEffect = /^\s*[\[\(].*[\]\)]\s*$/.test(text);
-        if (isSoundEffect && !settings.translate_sound) {
-            return block;
-        }
+        // 预处理和检查
+        if (text.length < 3) return block;
 
-        // 处理极短文本
-        if (text.length < 3) {
-            return block;
-        }
-
-        // 检测说话人标记
+        // 提取说话人信息
         const speakerMatch = text.match(/^([^:：]+)[:：]\s*/);
         let speaker = '';
         let textToTranslate = text;
 
-        if (speakerMatch && settings.speaker_format !== 'disable') {
+        if (speakerMatch) {
             speaker = speakerMatch[1];
             textToTranslate = text.substring(speakerMatch[0].length);
         }
 
+        // 翻译处理
         const translated = await translateText(textToTranslate);
         if (!translated) return block;
 
-        if (speaker) {
-            return formatBlock(timing, text, `${speaker}: ${translated}`);
-        } else {
-            return formatBlock(timing, text, translated);
-        }
+        // 重新组合字幕
+        return formatBlock(
+            timing,
+            text,
+            speaker ? `${speaker}: ${translated}` : translated
+        );
     } catch (e) {
+        console.log('处理错误:', e);
         return block;
     }
 }
@@ -141,7 +118,7 @@ async function processBlock(block) {
 // 主处理函数
 async function processNextBlock() {
     if (currentIndex >= subtitleBlocks.length) {
-        // 所有块处理完成
+        // 完成所有处理
         const result = 'WEBVTT\n\n' + processedBlocks.join('\n\n') + '\n';
         $done({
             body: result,
@@ -156,11 +133,10 @@ async function processNextBlock() {
         const processed = await processBlock(block);
         processedBlocks.push(processed);
         
-        // 休息一会，然后处理下一个
         currentIndex++;
         setTimeout(processNextBlock, settings.delay);
     } catch (e) {
-        // 出错时保留原文并继续
+        console.log('处理错误:', e);
         processedBlocks.push(subtitleBlocks[currentIndex]);
         currentIndex++;
         setTimeout(processNextBlock, settings.delay);
@@ -173,28 +149,27 @@ function start(body) {
     isRunning = true;
 
     try {
-        // 检查类型和内容
-        if (settings.type === "Disable" || !body) {
-            $done({});
-            return;
-        }
-
-        // 清理并分割字幕
+        // 预处理字幕
         body = body.replace(/^WEBVTT\n/, '').trim();
         subtitleBlocks = body.split('\n\n').filter(block => block.trim());
         
         // 开始处理
         processNextBlock();
     } catch (e) {
-        console.log('处理错误:', e);
+        console.log('启动错误:', e);
         $done({});
     }
 }
 
-// 主函数
+// 主入口
 if (url.includes('.vtt')) {
-    start($response.body);
+    if ($response.body) {
+        start($response.body);
+    } else {
+        $done({});
+    }
 } else if (url.includes('.m3u8')) {
     $done({});
 } else {
     $done({});
+}
