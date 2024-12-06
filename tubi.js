@@ -1,6 +1,6 @@
 /*
 Name: Tubi VTT Translator (Dual Subtitle Version)
-Version: 1.1.0
+Version: 1.2.0
 Author: Claude
 Update: 2024-12-06
 */
@@ -9,7 +9,6 @@ let $ = {
     done: value => { $done(value) }
 };
 
-const DELAY = 100;
 const API = 'https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=auto&tl=zh-CN';
 
 // 主逻辑
@@ -23,56 +22,42 @@ async function Main() {
     try {
         const blocks = $response.body.split('\n\n');
         const result = ['WEBVTT\n'];
-        let index = 0;
 
-        async function processBlocks() {
-            if (index >= blocks.length) {
-                $.done({
-                    body: result.join('\n'),
-                    headers: {'Content-Type': 'text/vtt;charset=utf-8'}
-                });
-                return;
-            }
-
-            const block = blocks[index];
+        const promises = blocks.map(async (block) => {
             const lines = block.split('\n');
             const timing = lines.find(line => line.includes(' --> '));
 
             if (!timing || lines.length < 2) {
-                result.push(block + '\n');
-                index++;
-                setTimeout(processBlocks, DELAY);
-                return;
+                return block + '\n';
             }
 
             const textIndex = lines.indexOf(timing) + 1;
             const text = lines.slice(textIndex).join(' ').trim();
 
             if (!text) {
-                result.push(block + '\n');
-                index++;
-                setTimeout(processBlocks, DELAY);
-                return;
+                return block + '\n';
             }
 
             try {
                 const translated = await translate(text);
                 if (translated) {
-                    result.push(`${timing}\n${text}\n${translated}\n`);
+                    return `${timing}\n${text}\n${translated}\n`;
                 } else {
-                    result.push(block + '\n');
+                    return block + '\n';
                 }
             } catch (e) {
                 console.log('[Translation Error]', e);
-                result.push(block + '\n');
+                return block + '\n';
             }
+        });
 
-            index++;
-            setTimeout(processBlocks, DELAY);
-        }
+        const translatedBlocks = await Promise.all(promises);
+        result.push(...translatedBlocks);
 
-        // 开始处理
-        processBlocks();
+        $.done({
+            body: result.join('\n'),
+            headers: {'Content-Type': 'text/vtt;charset=utf-8'}
+        });
 
     } catch (e) {
         console.log('[Main Error]', e);
@@ -81,34 +66,39 @@ async function Main() {
 }
 
 // 翻译函数
-function translate(text) {
+function translate(text, retries = 3) {
     return new Promise((resolve) => {
-        $httpClient.post({
-            url: API,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': '*/*',
-                'Accept-Language': 'zh-CN,zh-Hans;q=0.9'
-            },
-            body: `q=${encodeURIComponent(text)}`
-        }, (err, _, data) => {
-            if (err) {
-                console.log('[HTTP Error]', err);
-                resolve('');
-                return;
-            }
-
-            try {
-                const translated = JSON.parse(data)[0]
-                    .map(item => item[0])
-                    .join('')
-                    .trim();
-                resolve(translated);
-            } catch (e) {
-                console.log('[Parse Error]', e);
-                resolve('');
-            }
-        });
+        function attempt() {
+            $httpClient.post({
+                url: API,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Accept': '*/*',
+                    'Accept-Language': 'zh-CN,zh-Hans;q=0.9'
+                },
+                body: `q=${encodeURIComponent(text)}`
+            }, (err, _, data) => {
+                if (err && retries > 0) {
+                    console.log('[HTTP Error]', err);
+                    retries--;
+                    attempt(); // Retry
+                } else if (err) {
+                    resolve(''); // No retries left
+                } else {
+                    try {
+                        const translated = JSON.parse(data)[0]
+                            .map(item => item[0])
+                            .join('')
+                            .trim();
+                        resolve(translated);
+                    } catch (e) {
+                        console.log('[Parse Error]', e);
+                        resolve('');
+                    }
+                }
+            });
+        }
+        attempt();
     });
 }
