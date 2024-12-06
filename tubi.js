@@ -91,7 +91,8 @@ async function machine_subtitles(type) {
     console.log("Machine translating subtitles using: " + type);
     let body = $response.body;
     body = body.replace(/\r/g, "");
-    let dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+\n.+/g);
+    console.log("Original subtitles body: \n" + body);
+    let dialogue = body.match(/\d+:\d\d\.\d\d\d --> \d+:\d\d\.\d\d\d\n.+/g);
     if (!dialogue) {
         console.log("No dialogue found in subtitles.");
         $done({});
@@ -99,7 +100,7 @@ async function machine_subtitles(type) {
 
     let s_sentences = [];
     for (let i in dialogue) {
-        s_sentences.push(`~${i}~${dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+\n/, "")}`);
+        s_sentences.push(`~${i}~${dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d\.\d\d\d --> \d+:\d\d\.\d\d\d\n/, "")}`);
     }
     s_sentences = groupAgain(s_sentences, 80);
 
