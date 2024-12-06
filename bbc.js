@@ -1,9 +1,6 @@
-/*
-    Dualsub for Surge with BBC iPlayer Support
-*/
-
 let url = $request.url;
 let headers = $request.headers;
+let body = $response.body;
 
 let default_settings = {
     Disney: {
@@ -22,7 +19,6 @@ let default_settings = {
         subtitles_line: "null",
         external_subtitles: "null"
     },
-    // Adding BBC iPlayer settings
     BBCiPlayer: {
         type: "Google", // Google, DeepL, External, Disable
         lang: "English",
@@ -38,18 +34,15 @@ let default_settings = {
         subtitles_tl: "null",
         subtitles_line: "null",
         external_subtitles: "null"
-    },
-    // Other services omitted for brevity...
+    }
 };
 
-// Reading and handling settings
 let settings = $persistentStore.read();
 if (!settings) settings = default_settings;
 if (typeof (settings) == "string") settings = JSON.parse(settings);
 
 let service = "";
 if (url.match(/(dss|star)ott.com/)) service = "Disney";
-// Adding BBC iPlayer URL pattern matching
 if (url.match(/vod-hls-.+(\.live\.cf\.md\.bbci\.co\.uk|-live\.akamaized\.net)/) && url.match(/\.m3u8/)) service = "BBCiPlayer";
 
 console.log(`[DEBUG] Service detected: ${service}`);
@@ -64,7 +57,6 @@ let setting = settings[service];
 
 console.log(`[DEBUG] Settings for ${service}:`, setting);
 
-// BBC iPlayer Subtitle Request Handling
 if (service == "BBCiPlayer") {
     if (!url.match(/\.m3u8$/)) {
         console.log("[DEBUG] URL does not match .m3u8 pattern, skipping.");
@@ -89,7 +81,6 @@ if (service == "BBCiPlayer") {
     });
 }
 
-// Processing `action=get` and `action=set` requests
 if (url.match(/action=get/)) {
     console.log("[DEBUG] Processing action=get request.");
     delete setting.t_subtitles_url;
@@ -127,31 +118,16 @@ if (url.match(/action=set/)) {
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } });
 }
 
-// External subtitles function
-function external_subtitles() {
-    console.log("[DEBUG] Processing external subtitles.");
-    // Similar logic to handle external subtitles
-    let patt = new RegExp(`(\\d+\\n)*\\d+:\\d\\d:\\d\\d.\\d\\d\\d --> \\d+:\\d\\d:\\d\\d.\\d.+(\\n|.)+`);
-    if (!setting.external_subtitles.match(patt)) {
-        console.log("[DEBUG] No matching external subtitles pattern found.");
-        $done({});
-    }
-    if (!body.match(patt)) {
-        console.log("[DEBUG] No matching pattern in response body for external subtitles.");
-        $done({});
-    }
-    let external = setting.external_subtitles.replace(/(\\d+:\\d\\d:\\d\\d),(\\d\\d\\d)/g, "$1.$2");
-    body = body.replace(patt, external.match(patt)[0]);
-    console.log("[DEBUG] External subtitles processed successfully.");
-    $done({ body });
+// 插入中文字幕信息
+if (url.match(/vod-hls-.+(\.live\.cf\.md\.bbci\.co\.uk|-live\.akamaized\.net)/) && url.match(/\.m3u8/)) {
+    console.log("[DEBUG] 处理BBC iPlayer字幕请求");
+    body = body.replace(/(#EXT-X-MEDIA:TYPE=SUBTITLES.*)/g, `$1\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Chinese\",LANGUAGE=\"zh\",AUTOSELECT=YES,URI=\"https://your-chinese-subtitle-url.m3u8\"`);
 }
 
-// Machine translation function
-async function machine_subtitles(type) {
-    console.log(`[DEBUG] Processing machine translation with type: ${type}`);
-    // Logic for Google or DeepL translations (as in the original code)
-}
+// 替换所有的URI为https协议
+body = body.replace(/URI=\"http:\/\/([^\"]+)\"/g, 'URI="https://$1"');
 
-// Helper functions omitted for brevity...
+// 将中文字幕和英文字幕分组
+body = body.replace(/(#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Chinese\".*\n)(#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\".*)/g, '$1\n$2');
 
-$done({});
+$done({ body });
