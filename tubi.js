@@ -41,6 +41,7 @@ async function Main() {
             try {
                 const translated = await translate(text);
                 if (translated) {
+                    console.log('[Translation]', text, '=>', translated); // 添加日志记录原文与译文
                     return `${timing}\n${text}\n${translated}\n`;
                 } else {
                     return block + '\n';
@@ -84,6 +85,7 @@ function translate(text, retries = 3) {
                     retries--;
                     attempt(); // Retry
                 } else if (err) {
+                    console.log('[HTTP Error - No retries left]', err); // 添加日志记录无重试次数剩余时的错误
                     resolve(''); // No retries left
                 } else {
                     try {
