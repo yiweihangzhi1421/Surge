@@ -95,7 +95,7 @@ function translate(text, retries = 3) {
                             .trim();
                         resolve(translated);
                     } catch (e) {
-                        console.log('[Parse Error]', e);
+                        console.log('[Parse Error]', e, data); // 添加日志记录原始数据以调试解析错误
                         resolve('');
                     }
                 }
