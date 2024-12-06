@@ -1,44 +1,22 @@
-let url = $request.url;
-let headers = $request.headers;
+let isTVOS = /tvOS/.test(navigator.userAgent);
+let isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
-let default_settings = {
-    Tubi: {
-        type: "Google", // Google, DeepL, External, Disable
-        lang: "English",
-        sl: "auto",
-        tl: "zh", // 改成中文
-        line: "s", // f, s
-        dkey: "null", // DeepL API key
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    }
-};
-
-// 读取和处理设置
-let settings = $persistentStore.read();
-if (!settings) settings = default_settings;
-if (typeof settings == "string") settings = JSON.parse(settings);
+// 使用适合的存储方式
+let store = ($persistentStore || $prefs);
+let settings = store.read() || default_settings;
 
 let service = "";
 if (url.match(/\.adrise\.tv/)) service = "Tubi";
 
 if (!service) {
-    
     $done({});
 }
 
 if (!settings[service]) settings[service] = default_settings[service];
 let setting = settings[service];
 
-// 处理 `action=get` 和 `action=set` 请求
+// 处理action请求
 if (url.match(/action=get/)) {
-    
     delete setting.t_subtitles_url;
     delete setting.subtitles;
     delete setting.external_subtitles;
@@ -46,109 +24,75 @@ if (url.match(/action=get/)) {
 }
 
 if (url.match(/action=set/)) {
-    
     let new_setting = JSON.parse($request.body);
     if (new_setting.type != "External") settings[service].external_subtitles = "null";
     if (new_setting.type == "Reset") new_setting = default_settings[service];
-    if (new_setting.type) settings[service].type = new_setting.type;
-    if (new_setting.lang) settings[service].lang = new_setting.lang;
-    if (new_setting.sl) settings[service].sl = new_setting.sl;
-    if (new_setting.tl) settings[service].tl = new_setting.tl;
-    if (new_setting.line) settings[service].line = new_setting.line;
-    if (new_setting.dkey) settings[service].dkey = new_setting.dkey;
-    if (new_setting.s_subtitles_url) settings[service].s_subtitles_url = new_setting.s_subtitles_url;
-    if (new_setting.t_subtitles_url) settings[service].t_subtitles_url = new_setting.t_subtitles_url;
-    if (new_setting.subtitles) settings[service].subtitles = new_setting.subtitles;
-    if (new_setting.subtitles_type) settings[service].subtitles_type = new_setting.subtitles_type;
-    if (new_setting.subtitles_sl) settings[service].subtitles_sl = new_setting.subtitles_sl;
-    if (new_setting.subtitles_tl) settings[service].subtitles_tl = new_setting.subtitles_tl;
-    if (new_setting.subtitles_line) settings[service].subtitles_line = new_setting.subtitles_line;
-    if (new_setting.external_subtitles) settings[service].external_subtitles = new_setting.external_subtitles.replace(/\r/g, "");
-    $persistentStore.write(JSON.stringify(settings));
+    Object.assign(settings[service], new_setting);
+    store.write(JSON.stringify(settings));
     delete settings[service].t_subtitles_url;
     delete settings[service].subtitles;
     delete settings[service].external_subtitles;
-    
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } });
 }
 
-// 处理 .vtt 字幕
+// 字幕处理
 if (url.match(/\.vtt/)) {
-    
-    if (url == setting.s_subtitles_url && setting.subtitles != "null" && setting.subtitles_type == setting.type && setting.subtitles_sl == setting.sl && setting.subtitles_tl == setting.tl && setting.subtitles_line == setting.line) {
-        
+    if (url == setting.s_subtitles_url && setting.subtitles !== "null" && setting.subtitles_type == setting.type && setting.subtitles_sl == setting.sl && setting.subtitles_tl == setting.tl && setting.subtitles_line == setting.line) {
         $done({ body: setting.subtitles });
     }
 
     if (setting.type == "Google") {
-        
         machine_subtitles("Google");
     }
 }
 
 // 机器翻译字幕处理函数
 async function machine_subtitles(type) {
-    
     let body = $response.body;
     body = body.replace(/\r/g, "");
-    
     let dialogue = body.match(/\d+:\d\d\.\d\d\d --> \d+:\d\d\.\d\d\d\n.+/g);
     if (!dialogue) {
-        
         $done({});
     }
 
-    let s_sentences = [];
-    for (let i in dialogue) {
-        s_sentences.push(`~${i}~${dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d\.\d\d\d --> \d+:\d\d\.\d\d\d\n/, "")}`);
-    }
+    let s_sentences = dialogue.map((item, index) => `~${index}~${item.replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d\.\d\d\d --> \d+:\d\d\.\d\d\d\n/, "")}`);
     s_sentences = groupAgain(s_sentences, 80);
 
-    let t_sentences = [];
     let trans_result = [];
-
-    // Google 翻译处理
-    for (let p in s_sentences) {
-        
+    for (let sentences of s_sentences) {
         let options = {
             url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
-            headers: { "User-Agent": "GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)" },
-            body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
+            headers: { "User-Agent": isTVOS ? "tvOS-Translate/1.0" : "iOS-Translate/1.0" },
+            body: `q=${encodeURIComponent(sentences.join("\n"))}`
         };
         let trans = await send_request(options, "post");
         if (trans.sentences) {
-            let sentences = trans.sentences;
-            for (let k in sentences) {
-                if (sentences[k].trans) trans_result.push(sentences[k].trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"));
-            }
+            trans.sentences.forEach(item => {
+                if (item.trans) trans_result.push(item.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"));
+            });
         }
     }
 
     if (trans_result.length > 0) {
-        t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
-    }
-
-    if (t_sentences.length > 0) {
-        let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n");
-
-        for (let j in dialogue) {
-            let patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`);
-            let patt2 = new RegExp(`~${j}~\s*(.+)`);
-
-            if (g_t_sentences.match(patt2)) {
-                body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`);
-            }
+        let t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
+        if (t_sentences.length > 0) {
+            let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n");
+            dialogue.forEach((item, index) => {
+                let patt2 = new RegExp(`~${index}~\\s*(.+)`);
+                if (g_t_sentences.match(patt2)) {
+                    body = body.replace(item, `${item}\n${g_t_sentences.match(patt2)[1]}`);
+                }
+            });
         }
-
-        settings[service].s_subtitles_url = url;
-        settings[service].subtitles = body;
-        settings[service].subtitles_type = setting.type;
-        settings[service].subtitles_sl = setting.sl;
-        settings[service].subtitles_tl = setting.tl;
-        settings[service].subtitles_line = setting.line;
-        $persistentStore.write(JSON.stringify(settings));
-        
     }
+
+    settings[service].s_subtitles_url = url;
+    settings[service].subtitles = body;
+    settings[service].subtitles_type = setting.type;
+    settings[service].subtitles_sl = setting.sl;
+    settings[service].subtitles_tl = setting.tl;
+    settings[service].subtitles_line = setting.line;
+    store.write(JSON.stringify(settings));
 
     $done({ body });
 }
@@ -156,30 +100,31 @@ async function machine_subtitles(type) {
 // 发送请求函数
 function send_request(options, method) {
     return new Promise((resolve, reject) => {
-        
-        if (method == "get") {
-            $httpClient.get(options, function (error, response, data) {
-                if (error) {
-                    
-                    return reject('Error');
-                }
-                resolve(data);
-            });
-        }
-
-        if (method == "post") {
-            $httpClient.post(options, function (error, response, data) {
-                if (error) {
-                    
-                    return reject('Error');
-                }
-                resolve(JSON.parse(data));
-            });
+        try {
+            if (method == "get") {
+                $httpClient.get(options, function (error, response, data) {
+                    if (error) {
+                        reject(`GET Error: ${error}`);
+                    } else {
+                        resolve(data);
+                    }
+                });
+            } else if (method == "post") {
+                $httpClient.post(options, function (error, response, data) {
+                    if (error) {
+                        reject(`POST Error: ${error}`);
+                    } else {
+                        resolve(JSON.parse(data));
+                    }
+                });
+            }
+        } catch (err) {
+            reject(`Request Failed: ${err}`);
         }
     });
 }
 
-// 分组函数
+// 字幕分组函数
 function groupAgain(data, num) {
     let result = [];
     for (let i = 0; i < data.length; i += num) {
