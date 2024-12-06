@@ -1,6 +1,6 @@
 /*
 Name: Tubi VTT Translator (Dual Subtitle Version)
-Version: 1.2.0
+Version: 1.3.0
 Author: Claude
 Update: 2024-12-06
 */
@@ -83,7 +83,7 @@ function translate(text, retries = 3) {
                 if (err && retries > 0) {
                     console.log('[HTTP Error]', err);
                     retries--;
-                    attempt(); // Retry
+                    setTimeout(attempt, 1000); // Retry with delay of 1 second
                 } else if (err) {
                     console.log('[HTTP Error - No retries left]', err); // 添加日志记录无重试次数剩余时的错误
                     resolve(''); // No retries left
@@ -95,7 +95,7 @@ function translate(text, retries = 3) {
                             .trim();
                         resolve(translated);
                     } catch (e) {
-                        console.log('[Parse Error]', e, data); // 添加日志记录原始数据以调试解析错误
+                        console.log('[Parse Error]', e, 'Raw data:', data); // 添加日志记录原始数据以调试解析错误
                         resolve('');
                     }
                 }
