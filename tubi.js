@@ -29,7 +29,7 @@ let service = "";
 if (url.match(/\.adrise\.tv/)) service = "Tubi";
 
 if (!service) {
-    console.log("Service not recognized, exiting.");
+    
     $done({});
 }
 
@@ -38,7 +38,7 @@ let setting = settings[service];
 
 // 处理 `action=get` 和 `action=set` 请求
 if (url.match(/action=get/)) {
-    console.log("Handling action=get request.");
+    
     delete setting.t_subtitles_url;
     delete setting.subtitles;
     delete setting.external_subtitles;
@@ -46,7 +46,7 @@ if (url.match(/action=get/)) {
 }
 
 if (url.match(/action=set/)) {
-    console.log("Handling action=set request.");
+    
     let new_setting = JSON.parse($request.body);
     if (new_setting.type != "External") settings[service].external_subtitles = "null";
     if (new_setting.type == "Reset") new_setting = default_settings[service];
@@ -68,33 +68,33 @@ if (url.match(/action=set/)) {
     delete settings[service].t_subtitles_url;
     delete settings[service].subtitles;
     delete settings[service].external_subtitles;
-    console.log("Settings updated: " + JSON.stringify(settings[service]));
+    
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } });
 }
 
 // 处理 .vtt 字幕
 if (url.match(/\.vtt/)) {
-    console.log("Handling .vtt subtitles request.");
+    
     if (url == setting.s_subtitles_url && setting.subtitles != "null" && setting.subtitles_type == setting.type && setting.subtitles_sl == setting.sl && setting.subtitles_tl == setting.tl && setting.subtitles_line == setting.line) {
-        console.log("Returning cached subtitles.");
+        
         $done({ body: setting.subtitles });
     }
 
     if (setting.type == "Google") {
-        console.log("Using Google to translate subtitles.");
+        
         machine_subtitles("Google");
     }
 }
 
 // 机器翻译字幕处理函数
 async function machine_subtitles(type) {
-    console.log("Machine translating subtitles using: " + type);
+    
     let body = $response.body;
     body = body.replace(/\r/g, "");
-    console.log("Original subtitles body: \n" + body);
+    
     let dialogue = body.match(/\d+:\d\d\.\d\d\d --> \d+:\d\d\.\d\d\d\n.+/g);
     if (!dialogue) {
-        console.log("No dialogue found in subtitles.");
+        
         $done({});
     }
 
@@ -109,7 +109,7 @@ async function machine_subtitles(type) {
 
     // Google 翻译处理
     for (let p in s_sentences) {
-        console.log("Translating batch: " + p);
+        
         let options = {
             url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
             headers: { "User-Agent": "GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)" },
@@ -147,7 +147,7 @@ async function machine_subtitles(type) {
         settings[service].subtitles_tl = setting.tl;
         settings[service].subtitles_line = setting.line;
         $persistentStore.write(JSON.stringify(settings));
-        console.log("Subtitles translated and cached.");
+        
     }
 
     $done({ body });
@@ -156,11 +156,11 @@ async function machine_subtitles(type) {
 // 发送请求函数
 function send_request(options, method) {
     return new Promise((resolve, reject) => {
-        console.log("Sending request: " + options.url);
+        
         if (method == "get") {
             $httpClient.get(options, function (error, response, data) {
                 if (error) {
-                    console.log("Request error: " + error);
+                    
                     return reject('Error');
                 }
                 resolve(data);
@@ -170,7 +170,7 @@ function send_request(options, method) {
         if (method == "post") {
             $httpClient.post(options, function (error, response, data) {
                 if (error) {
-                    console.log("Request error: " + error);
+                    
                     return reject('Error');
                 }
                 resolve(JSON.parse(data));
