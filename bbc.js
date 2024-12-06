@@ -50,6 +50,7 @@ console.log(`[DEBUG] Service detected: ${service}`);
 if (!service) {
     console.log("[DEBUG] No matching service found.");
     $done({});
+    return;
 }
 
 if (!settings[service]) settings[service] = default_settings[service];
@@ -61,6 +62,7 @@ if (service == "BBCiPlayer") {
     if (!url.match(/\.m3u8$/)) {
         console.log("[DEBUG] URL does not match .m3u8 pattern, skipping.");
         $done({});
+        return;
     }
 
     console.log("[DEBUG] Redirecting to remote script for BBC iPlayer subtitles.");
@@ -76,9 +78,12 @@ if (service == "BBCiPlayer") {
             return;
         }
         console.log("[DEBUG] Successfully fetched remote script.");
+        console.log("[DEBUG] Evaluating remote script");
         eval(body); // 执行远程脚本
+        console.log("[DEBUG] Finished evaluating remote script");
         $done({});
     });
+    return;
 }
 
 if (url.match(/action=get/)) {
@@ -87,6 +92,7 @@ if (url.match(/action=get/)) {
     delete setting.subtitles;
     delete setting.external_subtitles;
     $done({ response: { body: JSON.stringify(setting), headers: { "Content-Type": "application/json" } } });
+    return;
 }
 
 if (url.match(/action=set/)) {
@@ -116,18 +122,22 @@ if (url.match(/action=set/)) {
     delete settings[service].external_subtitles;
     console.log(`[DEBUG] Updated settings for ${service}:`, settings[service]);
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } });
+    return;
 }
 
 // 插入中文字幕信息
 if (url.match(/vod-hls-.+(\.live\.cf\.md\.bbci\.co\.uk|-live\.akamaized\.net)/) && url.match(/\.m3u8/)) {
     console.log("[DEBUG] 处理BBC iPlayer字幕请求");
     body = body.replace(/(#EXT-X-MEDIA:TYPE=SUBTITLES.*)/g, `$1\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Chinese\",LANGUAGE=\"zh\",AUTOSELECT=YES,URI=\"https://your-chinese-subtitle-url.m3u8\"`);
+    console.log("[DEBUG] Subtitles inserted.");
 }
 
 // 替换所有的URI为https协议
 body = body.replace(/URI=\"http:\/\/([^\"]+)\"/g, 'URI="https://$1"');
+console.log("[DEBUG] Replaced all HTTP URIs to HTTPS.");
 
 // 将中文字幕和英文字幕分组
 body = body.replace(/(#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"Chinese\".*\n)(#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"English\".*)/g, '$1\n$2');
+console.log("[DEBUG] Grouped Chinese and English subtitles.");
 
 $done({ body });
