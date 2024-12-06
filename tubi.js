@@ -1,8 +1,8 @@
 /*
-Name: Tubi VTT Translator
-Version: 1.0.0
+Name: Tubi VTT Translator (Dual Subtitle Version)
+Version: 1.1.0
 Author: Claude
-Update: 2024-03-21
+Update: 2024-12-06
 */
 
 let $ = {
