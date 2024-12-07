@@ -12,11 +12,11 @@ const Vendor = args.get('Vendor');
 const ShowOnly = args.get('ShowOnly');
 
 // 读取持久化存储中的设置
-let settings = $persistentStore.read() || {};
-if (typeof settings === "string") settings = JSON.parse(settings);
+let settings = $persistentStore.read() || "{}";
+settings = JSON.parse(settings);
 
 // 判断当前服务是否为 BBCiPlayer
-let service = "BBCiPlayer";
+const service = "BBCiPlayer";
 
 // 确保服务的设置存在
 if (!settings[service]) {
@@ -113,16 +113,15 @@ if ((url.match(/\.vtt$/) || url.match(/\.xml$/)) && service === "BBCiPlayer") {
 
 // 外部字幕处理函数
 function external_subtitles(body) {
-    // 假设外部字幕是纯文本或简单的格式，可以根据需要调整
     let external = setting.external_subtitles;
-    // 简单地在每个字幕行后添加外部字幕
+    // 在每个 <span> 标签内添加外部字幕
     body = body.replace(/(<span[^>]*>)([^<]+)(<\/span>)/g, (match, p1, p2, p3) => `${p1}${p2} / ${external}${p3}`);
     $done({ body });
 }
 
 // 机器翻译字幕处理函数
 async function machine_subtitles(type, body) {
-    // 提取 <span> 内的文本
+    // 提取 <span> 标签内的文本
     let textPatterns = body.match(/<span[^>]*>[^<]+<\/span>/g);
     if (!textPatterns) {
         $done({});
