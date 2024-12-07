@@ -91,9 +91,9 @@ if ((url.match(/\.vtt$/) || url.match(/\.xml$/)) && service === "BBCiPlayer") {
         $done({ body: setting.subtitles });
     }
 
-    // 如果设置为禁用翻译，直接返回空
+    // 如果设置为禁用翻译，直接返回原始字幕
     if (setting.type === "Disable") {
-        $done({});
+        $done({ body: $response.body });
     }
 
     let body = $response.body;
@@ -103,28 +103,27 @@ if ((url.match(/\.vtt$/) || url.match(/\.xml$/)) && service === "BBCiPlayer") {
 
     // 根据设置类型处理字幕
     if (setting.type === "Google" || setting.type === "DeepL") {
-        machine_subtitles(setting.type);
+        machine_subtitles(setting.type, body);
     } else if (setting.type === "External") {
-        external_subtitles();
+        external_subtitles(body);
     } else { // Official
-        official_subtitles();
+        official_subtitles(body);
     }
 }
 
 // 外部字幕处理函数
-function external_subtitles() {
+function external_subtitles(body) {
     // 假设外部字幕是纯文本或简单的格式，可以根据需要调整
-    let pattern = /(<span[^>]*>)([^<]+)(<\/span>)/g;
     let external = setting.external_subtitles;
-    body = body.replace(pattern, (match, p1, p2, p3) => `${p1}${external}${p3}`);
+    // 简单地在每个字幕行后添加外部字幕
+    body = body.replace(/(<span[^>]*>)([^<]+)(<\/span>)/g, (match, p1, p2, p3) => `${p1}${p2} / ${external}${p3}`);
     $done({ body });
 }
 
 // 机器翻译字幕处理函数
-async function machine_subtitles(type) {
-    // 解析 TTML XML，提取文本
-    // 由于 Surge 脚本环境限制，没有完整的 XML 解析器，这里使用简单的正则表达式提取 <span> 内的文本
-    let textPatterns = body.match(/<span[^>]*>([^<]+)<\/span>/g);
+async function machine_subtitles(type, body) {
+    // 提取 <span> 内的文本
+    let textPatterns = body.match(/<span[^>]*>[^<]+<\/span>/g);
     if (!textPatterns) {
         $done({});
     }
@@ -147,10 +146,14 @@ async function machine_subtitles(type) {
                 url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${setting.sl}&tl=${setting.tl}&dt=t&q=${encodeURIComponent(query)}`,
                 headers: { "User-Agent": "Mozilla/5.0" },
             };
-            let trans = await send_request(options, "get");
-            if (trans && Array.isArray(trans[0])) {
-                let translatedGroup = trans[0].map(item => item[0]).join("\n");
-                translatedTexts.push(...translatedGroup.split("\n"));
+            try {
+                let trans = await send_request(options, "get");
+                if (trans && Array.isArray(trans[0])) {
+                    let translatedGroup = trans[0].map(item => item[0]).join("\n");
+                    translatedTexts.push(...translatedGroup.split("\n"));
+                }
+            } catch (error) {
+                console.error("Google 翻译错误:", error);
             }
         }
     } else if (type === "DeepL") {
@@ -161,11 +164,15 @@ async function machine_subtitles(type) {
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: `auth_key=${setting.dkey}&target_lang=${setting.tl}&text=${encodeURIComponent(query)}`
             };
-            let trans = await send_request(options, "post");
-            if (trans.translations) {
-                for (let translation of trans.translations) {
-                    translatedTexts.push(translation.text.replace(/\n/g, " "));
+            try {
+                let trans = await send_request(options, "post");
+                if (trans.translations) {
+                    for (let translation of trans.translations) {
+                        translatedTexts.push(translation.text.replace(/\n/g, " "));
+                    }
                 }
+            } catch (error) {
+                console.error("DeepL 翻译错误:", error);
             }
         }
     }
@@ -195,8 +202,8 @@ async function machine_subtitles(type) {
 }
 
 // 官方字幕处理函数（目前不需要处理）
-async function official_subtitles() {
-    $done({});
+async function official_subtitles(body) {
+    $done({ body });
 }
 
 // 发送请求函数
