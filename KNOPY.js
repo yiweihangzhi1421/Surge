@@ -51,6 +51,7 @@ if (url.match(/kanopy\.com/)) {
 if (!service) {
     console.log("[Kanopy] No supported service detected");
     $done({});
+    return;
 }
 
 if (!settings[service]) settings[service] = default_settings[service];
@@ -63,6 +64,7 @@ if (url.match(/action=get/)) {
     delete setting.subtitles;
     delete setting.external_subtitles;
     $done({ response: { body: JSON.stringify(setting), headers: { "Content-Type": "application/json" } } });
+    return;
 }
 
 // Handle set action
@@ -77,6 +79,7 @@ if (url.match(/action=set/)) {
     delete settings[service].subtitles;
     delete settings[service].external_subtitles;
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } });
+    return;
 }
 
 if (setting.type == "Disable") {
@@ -129,7 +132,7 @@ async function machine_subtitles(type) {
             let timing = lines[timecode_index];
             let format_lines = lines.slice(0, timecode_index);
             let text_lines = lines.slice(timecode_index + 1);
-            let text = text_lines.join(' ').replace(/<\/?[^>]+(>|$)/g, '').trim();
+            let text = text_lines.join(' ').replace(/</?[^>]+(>|$)/g, '').trim();
             subtitle_data.push({ timing, format: format_lines, original: text_lines.join('\n'), text });
             if (text) translatable_text.push(`${type == "Google" ? "~" + translatable_text.length + "~" : "&text="}${text}`);
         }
