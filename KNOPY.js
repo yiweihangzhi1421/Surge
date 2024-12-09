@@ -51,7 +51,6 @@ if (url.match(/kanopy\.com/)) {
 if (!service) {
     console.log("[Kanopy] No supported service detected");
     $done({});
-    return;
 }
 
 if (!settings[service]) settings[service] = default_settings[service];
@@ -64,7 +63,6 @@ if (url.match(/action=get/)) {
     delete setting.subtitles;
     delete setting.external_subtitles;
     $done({ response: { body: JSON.stringify(setting), headers: { "Content-Type": "application/json" } } });
-    return;
 }
 
 // Handle set action
@@ -79,52 +77,56 @@ if (url.match(/action=set/)) {
     delete settings[service].subtitles;
     delete settings[service].external_subtitles;
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } });
-    return;
 }
 
 if (setting.type == "Disable") {
     $done({});
-    return;
 }
 
-let body = $response.body;
-if (!body) {
-    $done({});
-    return;
-}
-
-// Process subtitles
-if (url.match(/\.vtt$/) || service == "Kanopy") {
-    console.log("[Kanopy] Processing subtitle file");
-    
-    // Check cache
-    if (url == setting.s_subtitles_url && 
-        setting.subtitles != "null" && 
-        setting.subtitles_type == setting.type && 
-        setting.subtitles_sl == setting.sl && 
-        setting.subtitles_tl == setting.tl && 
-        setting.subtitles_line == setting.line) {
-        console.log("[Kanopy] Using cached subtitles");
-        $done({ body: setting.subtitles });
+// Ensure that we are within a valid function scope for return statements
+function process_subtitles() {
+    let body = $response.body;
+    if (!body) {
+        $done({});
         return;
     }
 
-    if (setting.type == "Google") {
-        console.log("[Kanopy] Using Google Translate");
-        machine_subtitles("Google");
+    // Process subtitles
+    if (url.match(/\.vtt$/) || service == "Kanopy") {
+        console.log("[Kanopy] Processing subtitle file");
+
+        // Check cache
+        if (url == setting.s_subtitles_url && 
+            setting.subtitles != "null" && 
+            setting.subtitles_type == setting.type && 
+            setting.subtitles_sl == setting.sl && 
+            setting.subtitles_tl == setting.tl && 
+            setting.subtitles_line == setting.line) {
+            console.log("[Kanopy] Using cached subtitles");
+            $done({ body: setting.subtitles });
+            return;
+        }
+
+        if (setting.type == "Google") {
+            console.log("[Kanopy] Using Google Translate");
+            machine_subtitles("Google");
+        }
     }
 }
 
+// Run the processing function
+process_subtitles();
+
 async function machine_subtitles(type) {
     console.log("[Kanopy] Starting translation process");
-    
+
     try {
         let header = body.match(/^WEBVTT[\s\S]*?(?=\d{2}:)/)?.[0] || 'WEBVTT\n\n';
         let content = body.replace(/^WEBVTT[\s\S]*?(?=\d{2}:)/, '');
         let subtitles = content.split('\n\n').filter(block => block.trim());
         let translatable_text = [];
         let subtitle_data = [];
-        
+
         for (let block of subtitles) {
             let lines = block.split('\n');
             let timecode_index = lines.findIndex(line => line.match(/^\d{2}:\d{2}:/));
@@ -132,7 +134,7 @@ async function machine_subtitles(type) {
             let timing = lines[timecode_index];
             let format_lines = lines.slice(0, timecode_index);
             let text_lines = lines.slice(timecode_index + 1);
-            let text = text_lines.join(' ').replace(/</?[^>]+(>|$)/g, '').trim();
+            let text = text_lines.join(' ').replace(/<\/?[^>]+(>|$)/g, '').trim();
             subtitle_data.push({ timing, format: format_lines, original: text_lines.join('\n'), text });
             if (text) translatable_text.push(`${type == "Google" ? "~" + translatable_text.length + "~" : "&text="}${text}`);
         }
