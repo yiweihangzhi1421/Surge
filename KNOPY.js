@@ -81,13 +81,13 @@ if (url.match(/action=set/)) {
 
 if (setting.type == "Disable") {
     $done({});
-    return;
+    return; // 这里是正确的 return 语句，位于函数内部
 }
 
 let body = $response.body;
 if (!body) {
     $done({});
-    return;
+    return; // 同样在函数内部的 return
 }
 
 // Process subtitles
@@ -103,7 +103,7 @@ if (url.match(/\.vtt$/) || service == "Kanopy") {
         setting.subtitles_line == setting.line) {
         console.log("[Kanopy] Using cached subtitles");
         $done({ body: setting.subtitles });
-        return;
+        return; // 确保 return 语句在函数内
     }
 
     if (setting.type == "Google") {
