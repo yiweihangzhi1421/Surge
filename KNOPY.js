@@ -51,6 +51,7 @@ if (url.match(/kanopy\.com/)) {
 if (!service) {
     console.log("[Kanopy] No supported service detected");
     $done({});
+    return; // Ensure return is within the script context
 }
 
 if (!settings[service]) settings[service] = default_settings[service];
@@ -63,6 +64,7 @@ if (url.match(/action=get/)) {
     delete setting.subtitles;
     delete setting.external_subtitles;
     $done({ response: { body: JSON.stringify(setting), headers: { "Content-Type": "application/json" } } });
+    return; // Ensure return is within the script context
 }
 
 // Handle set action
@@ -77,17 +79,18 @@ if (url.match(/action=set/)) {
     delete settings[service].subtitles;
     delete settings[service].external_subtitles;
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } });
+    return; // Ensure return is within the script context
 }
 
 if (setting.type == "Disable") {
     $done({});
-    return; // This return is within a valid function scope
+    return; // Ensure return is within the script context
 }
 
 let body = $response.body;
 if (!body) {
     $done({});
-    return; // This return is within a valid function scope
+    return; // Ensure return is within the script context
 }
 
 // Process subtitles
@@ -103,7 +106,7 @@ if (url.match(/\.vtt$/) || service == "Kanopy") {
         setting.subtitles_line == setting.line) {
         console.log("[Kanopy] Using cached subtitles");
         $done({ body: setting.subtitles });
-        return; // This return is within a valid function scope
+        return; // Ensure return is within the script context
     }
 
     if (setting.type == "Google") {
