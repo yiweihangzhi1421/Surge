@@ -81,41 +81,36 @@ if (url.match(/action=set/)) {
 
 if (setting.type == "Disable") {
     $done({});
+    return;
 }
 
-// Ensure that we are within a valid function scope for return statements
-function process_subtitles() {
-    let body = $response.body;
-    if (!body) {
-        $done({});
+let body = $response.body;
+if (!body) {
+    $done({});
+    return;
+}
+
+// Process subtitles
+if (url.match(/\.vtt$/) || service == "Kanopy") {
+    console.log("[Kanopy] Processing subtitle file");
+    
+    // Check cache
+    if (url == setting.s_subtitles_url && 
+        setting.subtitles != "null" && 
+        setting.subtitles_type == setting.type && 
+        setting.subtitles_sl == setting.sl && 
+        setting.subtitles_tl == setting.tl && 
+        setting.subtitles_line == setting.line) {
+        console.log("[Kanopy] Using cached subtitles");
+        $done({ body: setting.subtitles });
         return;
     }
 
-    // Process subtitles
-    if (url.match(/\.vtt$/) || service == "Kanopy") {
-        console.log("[Kanopy] Processing subtitle file");
-
-        // Check cache
-        if (url == setting.s_subtitles_url && 
-            setting.subtitles != "null" && 
-            setting.subtitles_type == setting.type && 
-            setting.subtitles_sl == setting.sl && 
-            setting.subtitles_tl == setting.tl && 
-            setting.subtitles_line == setting.line) {
-            console.log("[Kanopy] Using cached subtitles");
-            $done({ body: setting.subtitles });
-            return;
-        }
-
-        if (setting.type == "Google") {
-            console.log("[Kanopy] Using Google Translate");
-            machine_subtitles("Google");
-        }
+    if (setting.type == "Google") {
+        console.log("[Kanopy] Using Google Translate");
+        machine_subtitles("Google");
     }
 }
-
-// Run the processing function
-process_subtitles();
 
 async function machine_subtitles(type) {
     console.log("[Kanopy] Starting translation process");
@@ -149,10 +144,19 @@ async function machine_subtitles(type) {
                 headers: { 'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)' },
                 body: `q=${encodeURIComponent(batch.join("\n"))}`
             };
+            console.log("[Kanopy] Sending translation request:", options.url);
             let trans = await send_request(options, "post");
-            trans.sentences?.forEach(sentence => {
-                if (sentence.trans) translations.push(sentence.trans.replace(/\n$/g, "").replace(/\n/g, " "));
-            });
+            console.log("[Kanopy] Translation response received:", trans);
+
+            if (trans && trans.sentences) {
+                trans.sentences.forEach(sentence => {
+                    if (sentence.trans) {
+                        translations.push(sentence.trans.replace(/\n$/g, "").replace(/\n/g, " "));
+                    }
+                });
+            } else {
+                console.log("[Kanopy] No valid translation sentences found");
+            }
         }
 
         let new_body = header;
@@ -171,7 +175,7 @@ async function machine_subtitles(type) {
         $persistentStore.write(JSON.stringify(settings));
         $done({ body: new_body });
     } catch (error) {
-        console.log("[Kanopy] Process error:", error);
+        console.error("[Kanopy] Process error:", error);
         $done({});
     }
 }
