@@ -159,7 +159,7 @@ let default_settings = {
         lang: "English",
         sl: "auto",
         tl: "zh", // 改成中文
-        line: "s", // f, s
+        line: "f", // f, s
         dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
@@ -198,7 +198,7 @@ let default_settings = {
         lang: "English",
         sl: "auto",
         tl: "zh", // 改成中文
-        line: "s", // f, s
+        line: "f", // f, s
         dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
