@@ -81,13 +81,13 @@ if (url.match(/action=set/)) {
 
 if (setting.type == "Disable") {
     $done({});
-    return; // return within valid function scope
+    return; // This return is within a valid function scope
 }
 
 let body = $response.body;
 if (!body) {
     $done({});
-    return; // return within valid function scope
+    return; // This return is within a valid function scope
 }
 
 // Process subtitles
@@ -103,7 +103,7 @@ if (url.match(/\.vtt$/) || service == "Kanopy") {
         setting.subtitles_line == setting.line) {
         console.log("[Kanopy] Using cached subtitles");
         $done({ body: setting.subtitles });
-        return; // return within valid function scope
+        return; // This return is within a valid function scope
     }
 
     if (setting.type == "Google") {
@@ -144,19 +144,10 @@ async function machine_subtitles(type) {
                 headers: { 'User-Agent': 'GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)' },
                 body: `q=${encodeURIComponent(batch.join("\n"))}`
             };
-            console.log("[Kanopy] Sending translation request:", options.url);
             let trans = await send_request(options, "post");
-            console.log("[Kanopy] Translation response received:", trans);
-
-            if (trans && trans.sentences) {
-                trans.sentences.forEach(sentence => {
-                    if (sentence.trans) {
-                        translations.push(sentence.trans.replace(/\n$/g, "").replace(/\n/g, " "));
-                    }
-                });
-            } else {
-                console.log("[Kanopy] No valid translation sentences found");
-            }
+            trans.sentences?.forEach(sentence => {
+                if (sentence.trans) translations.push(sentence.trans.replace(/\n$/g, "").replace(/\n/g, " "));
+            });
         }
 
         let new_body = header;
