@@ -79,10 +79,16 @@ if (url.match(/action=set/)) {
     $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } });
 }
 
-if (setting.type == "Disable") $done({});
+if (setting.type == "Disable") {
+    $done({});
+    return;
+}
 
 let body = $response.body;
-if (!body) $done({});
+if (!body) {
+    $done({});
+    return;
+}
 
 // Process subtitles
 if (url.match(/\.vtt$/) || service == "Kanopy") {
