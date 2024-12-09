@@ -81,19 +81,19 @@ if (url.match(/action=set/)) {
 
 if (setting.type == "Disable") {
     $done({});
-    return; // 这里是正确的 return 语句，位于函数内部
+    return; // return within valid function scope
 }
 
 let body = $response.body;
 if (!body) {
     $done({});
-    return; // 同样在函数内部的 return
+    return; // return within valid function scope
 }
 
 // Process subtitles
 if (url.match(/\.vtt$/) || service == "Kanopy") {
     console.log("[Kanopy] Processing subtitle file");
-    
+
     // Check cache
     if (url == setting.s_subtitles_url && 
         setting.subtitles != "null" && 
@@ -103,7 +103,7 @@ if (url.match(/\.vtt$/) || service == "Kanopy") {
         setting.subtitles_line == setting.line) {
         console.log("[Kanopy] Using cached subtitles");
         $done({ body: setting.subtitles });
-        return; // 确保 return 语句在函数内
+        return; // return within valid function scope
     }
 
     if (setting.type == "Google") {
