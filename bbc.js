@@ -21,16 +21,14 @@
         GitHub: Neurogram-R
 */
 
-const url = $request.url;
-const headers = $request.headers;
-
 // 固定设置
 const sourceLang = "EN"; // 源语言：英文
 const targetLang = "ZH"; // 目标语言：中文
 const translationType = "Google"; // 翻译类型："Google" 或 "DeepL"
+const deepLAuthKey = "YOUR_DEEPL_API_KEY"; // 如果使用 DeepL，请替换为你的 DeepL API 密钥
 
 // 检测是否为 BBC iPlayer 的字幕请求
-if (!url.match(/vod-sub-uk-live\.akamaized\.net\/iplayer\/subtitles\/ng\/modav\//)) {
+if (!/^https:\/\/vod-sub-uk-live\.akamaized\.net\/iplayer\/subtitles\/ng\/modav\/.+\.xml$/i.test(url)) {
     $done({});
 }
 
@@ -42,15 +40,10 @@ if (!body) {
     $done({});
 }
 
-// 检查是否为 TTML 格式
-if (!url.match(/\.xml$/i)) {
-    $done({});
-}
-
 // 处理 TTML 字幕
-handleTTML(body, translationType);
+handleTTML(body);
 
-function handleTTML(body, type) {
+function handleTTML(body) {
     // 解析 TTML XML
     let parser = new DOMParser();
     let xmlDoc = parser.parseFromString(body, "application/xml");
@@ -91,103 +84,125 @@ function handleTTML(body, type) {
     let translatedTexts = [];
 
     // 逐批翻译
-    (async () => {
-        for (let batch of batches) {
-            if (type === "Google") {
-                let translatedBatch = await translateWithGoogle(batch, sourceLang, targetLang);
-                translatedTexts = translatedTexts.concat(translatedBatch);
-            } else if (type === "DeepL") {
-                let translatedBatch = await translateWithDeepL(batch, sourceLang, targetLang);
-                translatedTexts = translatedTexts.concat(translatedBatch);
-            }
-        }
-
+    translateBatches(batches, function(translated) {
+        translatedTexts = translated;
         // 插入翻译后的文本
-        for (let i = 0; i < paragraphs.length; i++) {
-            let originalText = paragraphs[i].textContent.trim();
-            if (originalText.length > 0 && translatedTexts[i]) {
-                // 创建 <span> 标签用于中文字幕
-                let chineseSpan = xmlDoc.createElement("span");
-                chineseSpan.textContent = translatedTexts[i];
-                // 插入 <br/> 标签
-                let br = xmlDoc.createElement("br");
-                // 插入到原有内容之前
-                paragraphs[i].insertBefore(chineseSpan, paragraphs[i].firstChild);
-                paragraphs[i].insertBefore(br, chineseSpan);
-            }
-        }
-
-        // 序列化回 XML
-        let serializer = new XMLSerializer();
-        let newBody = serializer.serializeToString(xmlDoc);
-
-        // 返回修改后的 TTML
-        $done({ body: newBody });
-    })();
+        insertTranslations(xmlDoc, paragraphs, translatedTexts);
+    }, function(error) {
+        // 出现错误时，直接返回原始字幕
+        $done({});
+    });
 }
 
-// 使用 Google Translate API 进行翻译
-async function translateWithGoogle(texts, sourceLang, targetLang) {
+function translateBatches(batches, success, failure) {
     let translated = [];
-    let query = texts.join("\n");
-    let url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(query)}`;
+    let completed = 0;
 
-    try {
-        let response = await $httpClient.get({
-            url: url,
+    for (let i = 0; i < batches.length; i++) {
+        translateBatch(batches[i], function(batchTranslated) {
+            translated = translated.concat(batchTranslated);
+            completed++;
+            if (completed === batches.length) {
+                success(translated);
+            }
+        }, function() {
+            failure();
+        });
+    }
+}
+
+function translateBatch(batch, success, failure) {
+    if (translationType === "Google") {
+        translateWithGoogle(batch, success, failure);
+    } else if (translationType === "DeepL") {
+        translateWithDeepL(batch, success, failure);
+    } else {
+        failure();
+    }
+}
+
+function translateWithGoogle(texts, success, failure) {
+    let query = texts.join("\n");
+    let translateUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(query)}`;
+
+    $httpClient.get({
+        url: translateUrl,
+        headers: {
+            "User-Agent": "Mozilla/5.0"
+        }
+    }, function(error, response, data) {
+        if (error || response.status !== 200) {
+            failure();
+            return;
+        }
+
+        try {
+            let result = JSON.parse(data);
+            let translations = result[0].map(item => item[0]);
+            success(translations);
+        } catch (e) {
+            failure();
+        }
+    });
+}
+
+function translateWithDeepL(texts, success, failure) {
+    let translated = [];
+    let remaining = texts.length;
+
+    for (let i = 0; i < texts.length; i++) {
+        let text = texts[i];
+        let translateUrl = "https://api-free.deepl.com/v2/translate";
+
+        $httpClient.post({
+            url: translateUrl,
             headers: {
-                "User-Agent": "Mozilla/5.0"
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: `auth_key=${deepLAuthKey}&text=${encodeURIComponent(text)}&source_lang=${sourceLang}&target_lang=${targetLang}`
+        }, function(error, response, data) {
+            if (error || response.status !== 200) {
+                translated.push("");
+            } else {
+                try {
+                    let json = JSON.parse(data);
+                    if (json.translations && json.translations.length > 0) {
+                        translated.push(json.translations[0].text);
+                    } else {
+                        translated.push("");
+                    }
+                } catch (e) {
+                    translated.push("");
+                }
+            }
+
+            remaining--;
+            if (remaining === 0) {
+                success(translated);
             }
         });
-
-        if (response.error) {
-            return translated;
-        }
-
-        let data = response.data;
-        // 解析返回的翻译结果
-        let result = JSON.parse(data);
-        for (let i = 0; i < result[0].length; i++) {
-            translated.push(result[0][i][0]);
-        }
-
-        return translated;
-    } catch (e) {
-        return translated;
     }
 }
 
-// 使用 DeepL API 进行翻译
-async function translateWithDeepL(texts, sourceLang, targetLang) {
-    let translated = [];
-    let authKey = "YOUR_DEEPL_API_KEY"; // 请替换为你的 DeepL API 密钥
-    let url = "https://api-free.deepl.com/v2/translate";
-
-    for (let text of texts) {
-        try {
-            let response = await $httpClient.post({
-                url: url,
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded"
-                },
-                body: `auth_key=${authKey}&text=${encodeURIComponent(text)}&source_lang=${sourceLang}&target_lang=${targetLang}`
-            });
-
-            if (response.error) {
-                translated.push("");
-                continue;
-            }
-
-            let data = JSON.parse(response.data);
-            if (data.translations && data.translations.length > 0) {
-                translated.push(data.translations[0].text);
-            } else {
-                translated.push("");
-            }
-        } catch (e) {
-            translated.push("");
+function insertTranslations(xmlDoc, paragraphs, translatedTexts) {
+    for (let i = 0; i < paragraphs.length; i++) {
+        let originalText = paragraphs[i].textContent.trim();
+        if (originalText.length > 0 && translatedTexts[i]) {
+            // 创建 <span> 标签用于中文字幕
+            let chineseSpan = xmlDoc.createElement("span");
+            chineseSpan.textContent = translatedTexts[i];
+            // 插入 <br/> 标签
+            let br = xmlDoc.createElement("br");
+            // 插入到原有内容之前
+            paragraphs[i].insertBefore(br, paragraphs[i].firstChild);
+            paragraphs[i].insertBefore(chineseSpan, br.nextSibling);
         }
     }
 
-    return translated;
+    // 序列化回 XML
+    let serializer = new XMLSerializer();
+    let newBody = serializer.serializeToString(xmlDoc);
+
+    // 返回修改后的 TTML
+    $done({ body: newBody });
 }
