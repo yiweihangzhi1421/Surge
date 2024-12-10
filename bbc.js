@@ -1,11 +1,11 @@
 /*
-    DualSubs.BBC.VTT.js
+    DualSubs.BBC.TTML.js
 
     功能:
-    - 拦截 BBC iPlayer 的 VTT 字幕请求
+    - 拦截 BBC iPlayer 的 TTML (.xml) 字幕请求
     - 将英文字幕翻译为中文
-    - 生成双语 VTT 字幕，中文字幕在上，英文在下
-    - 返回修改后的 VTT 字幕
+    - 生成双语 TTML 字幕，中文字幕在上，英文在下
+    - 返回修改后的 TTML 字幕
 
     作者:
     - 您的名字或联系方式
@@ -22,56 +22,84 @@ const targetLang = "ZH"; // 目标语言：中文
 const translationType = "Google"; // 翻译类型："Google" 或 "DeepL"
 const deepLAuthKey = "YOUR_DEEPL_API_KEY"; // 如果使用 DeepL，请替换为你的 DeepL API 密钥
 
-console.log("DualSubs.BBC.VTT.js 脚本已被触发，URL:", url);
+console.log("DualSubs.BBC.TTML.js 脚本已被触发，URL:", url);
 
-// 解析 VTT 内容
-let vttLines = body.split('\n');
-let translatedTexts = [];
+// 检查响应体是否存在
+if (!body) {
+    console.log("响应体为空，脚本终止");
+    $done({});
+}
+
+// 解析 TTML XML
+let parser = new DOMParser();
+let xmlDoc = parser.parseFromString(body, "application/xml");
+
+// 检查解析是否成功
+if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
+    console.log("解析 TTML XML 失败");
+    $done({});
+}
+
+// 获取所有 <p> 标签（字幕段落）
+let paragraphs = xmlDoc.getElementsByTagName("p");
+console.log(`找到 ${paragraphs.length} 个 <p> 标签`);
+
+if (paragraphs.length === 0) {
+    console.log("没有找到任何字幕段落");
+    $done({});
+}
+
+// 提取所有字幕文本
 let originalTexts = [];
-
-// 提取需要翻译的字幕文本
-for (let line of vttLines) {
-    if (line.trim() === "" || line.startsWith("WEBVTT") || line.startsWith("NOTE") || /^[0-9]+$/.test(line)) {
-        continue;
+for (let p of paragraphs) {
+    let text = p.textContent.trim();
+    if (text) {
+        originalTexts.push(text);
     }
-    if (/-->/i.test(line)) {
-        continue;
-    }
-    originalTexts.push(line);
 }
 
 if (originalTexts.length === 0) {
-    console.log("没有找到需要翻译的字幕文本");
-    $done({ body: body });
+    console.log("没有需要翻译的字幕文本");
+    $done({});
 }
 
-// 分批翻译
-translateTexts(originalTexts, function(translations) {
-    // 生成双语字幕
-    let newVttLines = [];
+console.log(`需要翻译的字幕行数: ${originalTexts.length}`);
+
+// 翻译字幕文本
+translateTexts(originalTexts, function(translatedTexts) {
+    // 插入翻译后的文本
     let textIndex = 0;
+    for (let p of paragraphs) {
+        let originalText = p.textContent.trim();
+        if (originalText) {
+            let translatedText = translatedTexts[textIndex];
+            textIndex++;
 
-    newVttLines.push("WEBVTT\n");
+            // 创建一个新的 <span> 标签用于中文翻译
+            let span = xmlDoc.createElement("span");
+            span.setAttribute("style", "tts:color=\"#00FF00\"; tts:backgroundColor=\"#000000\";"); // 示例样式，可根据需要调整
+            span.textContent = translatedText;
 
-    for (let line of vttLines) {
-        newVttLines.push(line);
-        // 插入翻译后的字幕
-        if (line && !line.startsWith("WEBVTT") && !line.startsWith("NOTE") && !/-->/i.test(line) && !/^[0-9]+$/.test(line)) {
-            if (translations[textIndex]) {
-                newVttLines.push(translations[textIndex]);
-                textIndex++;
-            }
+            // 插入中文翻译到原始文本之前
+            p.insertBefore(span, p.firstChild);
+
+            // 插入一个换行符
+            let br = xmlDoc.createElement("br");
+            p.insertBefore(br, span.nextSibling);
         }
     }
 
-    let newVttBody = newVttLines.join('\n');
-    console.log("生成新的双语 VTT 字幕，内容长度:", newVttBody.length);
+    // 序列化回 TTML
+    let serializer = new XMLSerializer();
+    let newBody = serializer.serializeToString(xmlDoc);
 
-    // 返回修改后的 VTT 字幕
-    $done({ body: newVttBody });
+    console.log("生成新的双语 TTML 字幕，内容长度:", newBody.length);
+
+    // 返回修改后的 TTML
+    $done({ body: newBody });
 }, function(error) {
     console.log("翻译失败，错误:", error);
-    $done({ body: body });
+    $done({});
 });
 
 // 翻译函数
