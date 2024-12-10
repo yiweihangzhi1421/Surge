@@ -3,18 +3,18 @@
 
     功能:
     - 拦截 BBC iPlayer 的 TTML (.xml) 字幕请求
-    - 将英文字幕翻译为中文
-    - 生成双语 TTML 字幕，中文字幕在上，英文在下
+    - 解析 TTML 文件，提取英文字幕文本
+    - 翻译英文文本为中文
+    - 将中文翻译文本插入到相应的位置，形成双语字幕
     - 返回修改后的 TTML 字幕
 
     作者:
-    - 您的名字或联系方式
+    - VirgilClyne
 */
 
 // 获取请求 URL 和响应体
 const url = $request.url;
 const body = $response.body;
-const headers = $request.headers;
 
 // 固定设置
 const sourceLang = "EN"; // 源语言：英文
@@ -67,11 +67,13 @@ console.log(`需要翻译的字幕行数: ${originalTexts.length}`);
 
 // 翻译字幕文本
 translateTexts(originalTexts, function(translatedTexts) {
+    console.log("翻译完成，生成双语 TTML 字幕");
+
     // 插入翻译后的文本
     let textIndex = 0;
     for (let p of paragraphs) {
-        let originalText = p.textContent.trim();
-        if (originalText) {
+        let text = p.textContent.trim();
+        if (text) {
             let translatedText = translatedTexts[textIndex];
             textIndex++;
 
