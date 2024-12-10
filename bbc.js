@@ -12,7 +12,9 @@
     - 您的名字或联系方式
 */
 
+// 获取请求 URL 和响应体
 const url = $request.url;
+const body = $response.body;
 const headers = $request.headers;
 
 // 固定设置
@@ -24,14 +26,6 @@ const deepLAuthKey = "YOUR_DEEPL_API_KEY"; // 如果使用 DeepL，请替换为�
 // 检测是否为 BBC iPlayer 的 .m3u8 字幕请求
 const m3u8Pattern = /^https?:\/\/vod-hls-(.+)(\.live\.cf\.md\.bbci\.co\.uk|-live\.akamaized\.net)\/(.+)_hls_master\.m3u8(\?.+)?$/i;
 if (!m3u8Pattern.test(url)) {
-    $done({});
-}
-
-// 获取响应体
-let body = $response.body;
-
-// 如果响应体为空，结束
-if (!body) {
     $done({});
 }
 
@@ -69,9 +63,8 @@ $httpClient.get({
         // 生成新的双语 VTT 文件
         let newVttContent = generateDualVTT(vttContent, translatedVTT);
         
-        // 上传新的 VTT 字幕文件到可访问的 URL
-        // 注意：Surge 不支持动态上传文件，因此需要您自行托管新的 VTT 文件，并更新 .m3u8 中的 URI
-        // 这里假设您已将新 VTT 文件上传到某个 URL
+        // 手动上传新的 VTT 字幕文件到可访问的 URL
+        // 请确保您已将新 VTT 文件上传到您的服务器，并获取其 URL
         let newVttUrl = "https://yourserver.com/path/to/dual_subtitles.vtt"; // 替换为您的双语 VTT 文件 URL
 
         // 替换 .m3u8 中的 URI 为新的双语 VTT 文件 URL
@@ -202,22 +195,23 @@ function translateWithDeepL(texts, success, failure) {
     }
 }
 
-function generateDualVTT(originalVtt, translatedVtt) {
+function generateDualVTT(originalVtt, translatedTexts) {
     // 简单的双语 VTT 生成示例
-    // 实际情况可能需要更复杂的时间轴对齐和格式处理
+    // 需要确保 translatedTexts 的顺序与 originalVtt 中的文本顺序一致
 
-    let originalLines = originalVtt.split('\n');
-    let translatedLines = translatedVtt.join('\n').split('\n');
-
+    let lines = originalVtt.split('\n');
     let newVtt = "WEBVTT\n\n";
+    let textIndex = 0;
 
-    let translatedIndex = 0;
-    for (let line of originalLines) {
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
         newVtt += line + '\n';
-        if (line.match(/-->/)) {
-            if (translatedIndex < translatedLines.length) {
-                newVtt += translatedLines[translatedIndex] + '\n';
-                translatedIndex++;
+
+        // 处理文本行
+        if (line && !line.startsWith("WEBVTT") && !line.startsWith("NOTE") && !/-->/i.test(line) && !/^[0-9]+$/.test(line)) {
+            if (translatedTexts[textIndex]) {
+                newVtt += translatedTexts[textIndex] + '\n';
+                textIndex++;
             }
         }
     }
