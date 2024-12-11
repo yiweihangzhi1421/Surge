@@ -1,187 +1,158 @@
-/*
-    DualSubs.BBC.TTML.js
+// CombinedSubtitles.response.bundle.js
 
-    功能:
-    - 拦截 BBC iPlayer 的 TTML (.xml) 字幕请求
-    - 解析 TTML 文件，提取英文字幕文本
-    - 翻译英文文本为中文
-    - 将中文翻译文本插入到相应的位置，形成双语字幕
-    - 返回修改后的 TTML 字幕
+(async () => {
+  try {
+    const url = $request.url;
+    console.log('处理 URL:', url);
+    let modifiedBody = $response.body.string();
 
-    作者:
-    - VirgilClyne
-*/
-
-// 获取请求 URL 和响应体
-const url = $request.url;
-const body = $response.body;
-
-// 固定设置
-const sourceLang = "EN"; // 源语言：英文
-const targetLang = "ZH"; // 目标语言：中文
-const translationType = "Google"; // 翻译类型："Google" 或 "DeepL"
-const deepLAuthKey = "YOUR_DEEPL_API_KEY"; // 如果使用 DeepL，请替换为你的 DeepL API 密钥
-
-console.log("DualSubs.BBC.TTML.js 脚本已被触发，URL:", url);
-
-// 检查响应体是否存在
-if (!body) {
-    console.log("响应体为空，脚本终止");
-    $done({});
-}
-
-// 解析 TTML XML
-let parser = new DOMParser();
-let xmlDoc = parser.parseFromString(body, "application/xml");
-
-// 检查解析是否成功
-if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
-    console.log("解析 TTML XML 失败");
-    $done({});
-}
-
-// 获取所有 <p> 标签（字幕段落）
-let paragraphs = xmlDoc.getElementsByTagName("p");
-console.log(`找到 ${paragraphs.length} 个 <p> 标签`);
-
-if (paragraphs.length === 0) {
-    console.log("没有找到任何字幕段落");
-    $done({});
-}
-
-// 提取所有字幕文本
-let originalTexts = [];
-for (let p of paragraphs) {
-    let text = p.textContent.trim();
-    if (text) {
-        originalTexts.push(text);
-    }
-}
-
-if (originalTexts.length === 0) {
-    console.log("没有需要翻译的字幕文本");
-    $done({});
-}
-
-console.log(`需要翻译的字幕行数: ${originalTexts.length}`);
-
-// 翻译字幕文本
-translateTexts(originalTexts, function(translatedTexts) {
-    console.log("翻译完成，生成双语 TTML 字幕");
-
-    // 插入翻译后的文本
-    let textIndex = 0;
-    for (let p of paragraphs) {
-        let text = p.textContent.trim();
-        if (text) {
-            let translatedText = translatedTexts[textIndex];
-            textIndex++;
-
-            // 创建一个新的 <span> 标签用于中文翻译
-            let span = xmlDoc.createElement("span");
-            span.setAttribute("style", "tts:color=\"#00FF00\"; tts:backgroundColor=\"#000000\";"); // 示例样式，可根据需要调整
-            span.textContent = translatedText;
-
-            // 插入中文翻译到原始文本之前
-            p.insertBefore(span, p.firstChild);
-
-            // 插入一个换行符
-            let br = xmlDoc.createElement("br");
-            p.insertBefore(br, span.nextSibling);
-        }
-    }
-
-    // 序列化回 TTML
-    let serializer = new XMLSerializer();
-    let newBody = serializer.serializeToString(xmlDoc);
-
-    console.log("生成新的双语 TTML 字幕，内容长度:", newBody.length);
-
-    // 返回修改后的 TTML
-    $done({ body: newBody });
-}, function(error) {
-    console.log("翻译失败，错误:", error);
-    $done({});
-});
-
-// 翻译函数
-function translateTexts(texts, success, failure) {
-    if (translationType === "Google") {
-        translateWithGoogle(texts, success, failure);
-    } else if (translationType === "DeepL") {
-        translateWithDeepL(texts, success, failure);
+    if (/\/.*_hls_master\.m3u8$/.test(url)) {
+      // 处理 Manifest.m3u8
+      console.log('处理 Manifest.m3u8');
+      modifiedBody = handleManifest(modifiedBody);
+    } else if (/\/iplayer\/subtitles\/.*\.xml\?.*subtype=(Official|External)/.test(url)) {
+      // 处理 Composite Subtitles XML
+      console.log('处理 Composite Subtitles XML');
+      modifiedBody = handleCompositeSubtitles(modifiedBody);
+    } else if (/\/iplayer\/subtitles\/.*\.xml$/.test(url)) {
+      // 处理 Translate Subtitles XML
+      console.log('处理 Translate Subtitles XML');
+      modifiedBody = await handleTranslateSubtitles(modifiedBody);
     } else {
-        console.log("未知的翻译类型:", translationType);
-        failure("未知的翻译类型");
+      console.log('未匹配到任何模式，返回原始内容。');
     }
+
+    // 返回修改后的内容
+    $done({ body: modifiedBody });
+
+  } catch (error) {
+    console.error('脚本错误:', error);
+    $done({});
+  }
+})();
+
+// 处理 Manifest.m3u8 的函数
+function handleManifest(originalManifest) {
+  // 使用正则表达式查找字幕 URL
+  const subtitleRegex = /#EXT-X-MEDIA:.*?URI="(.*?)"/g;
+  let match;
+  let subtitleURLs = [];
+
+  while ((match = subtitleRegex.exec(originalManifest)) !== null) {
+    subtitleURLs.push(match[1]);
+  }
+
+  console.log('找到的字幕 URLs:', subtitleURLs);
+
+  // 为每个字幕 URL 生成翻译后的字幕 URL，并添加到 manifest 中
+  subtitleURLs.forEach(url => {
+    const translatedURL = url.replace('.vtt', '_translated.vtt');
+    const newSubtitleEntry = `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="translated",NAME="Chinese",LANGUAGE="ZH",AUTOSELECT=YES,DEFAULT=NO,URI="${translatedURL}"`;
+    originalManifest += `\n${newSubtitleEntry}`;
+  });
+
+  console.log('修改后的 Manifest:', originalManifest);
+
+  return originalManifest;
 }
 
-// 使用 Google Translate API 进行翻译
-function translateWithGoogle(texts, success, failure) {
-    let query = texts.join("\n");
-    let translateUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&q=${encodeURIComponent(query)}`;
+// 处理 Composite Subtitles XML 的函数
+function handleCompositeSubtitles(originalXML) {
+  // 解析 XML，提取 <text> 标签中的字幕内容
+  const parser = new DOMParser();
+  const xmlDoc = parser.parseFromString(originalXML, "application/xml");
+  const subtitles = xmlDoc.getElementsByTagName('text');
 
-    console.log("使用 Google Translate 进行翻译，URL:", translateUrl);
+  let subtitleTexts = [];
+  for (let i = 0; i < subtitles.length; i++) {
+    subtitleTexts.push(subtitles[i].textContent.trim());
+  }
 
-    $httpClient.get({
-        url: translateUrl,
-        headers: {
-            "User-Agent": "Mozilla/5.0"
-        }
-    }, function(error, response, data) {
-        if (error || response.status !== 200) {
-            console.log("Google 翻译请求失败，错误:", error);
-            failure(error || `HTTP 状态码: ${response.status}`);
-            return;
-        }
+  console.log('提取的字幕内容:', subtitleTexts);
 
-        try {
-            let result = JSON.parse(data);
-            let translations = result[0].map(item => item[0]);
-            success(translations);
-        } catch (e) {
-            console.log("解析 Google 翻译响应失败，错误:", e);
-            failure(e);
-        }
+  // 此处可以添加逻辑，例如标记字幕以便后续翻译
+  // 这里暂时返回原始 XML，实际应用中可能需要进一步处理
+  return originalXML;
+}
+
+// 处理 Translate Subtitles XML 的函数
+async function handleTranslateSubtitles(originalXML) {
+  // 解析 XML，提取 <text> 标签中的字幕内容
+  const parser = new DOMParser();
+  const xmlDoc = parser.parseFromString(originalXML, "application/xml");
+  const subtitles = xmlDoc.getElementsByTagName('text');
+
+  let subtitleTexts = [];
+  for (let i = 0; i < subtitles.length; i++) {
+    subtitleTexts.push(subtitles[i].textContent.trim());
+  }
+
+  console.log('提取的字幕内容:', subtitleTexts);
+
+  // 翻译每一行字幕文本
+  let translatedTexts = [];
+  for (let text of subtitleTexts) {
+    if (text === '') {
+      translatedTexts.push('');
+      continue;
+    }
+
+    let translated = await translateText(text, 'ZH'); // 目标语言：中文
+    translatedTexts.push(translated);
+
+    // 延时 300 毫秒，避免触发 API 速率限制
+    await delay(300);
+  }
+
+  console.log('翻译后的字幕内容:', translatedTexts);
+
+  // 将翻译后的文本插入到 XML 中
+  for (let i = 0; i < subtitles.length; i++) {
+    if (translatedTexts[i]) {
+      const translatedNode = xmlDoc.createElement('translatedText');
+      translatedNode.textContent = translatedTexts[i];
+      subtitles[i].parentNode.insertBefore(translatedNode, subtitles[i].nextSibling);
+    }
+  }
+
+  // 序列化修改后的 XML
+  const serializer = new XMLSerializer();
+  const modifiedXML = serializer.serializeToString(xmlDoc);
+
+  console.log('修改后的 Subtitles XML:', modifiedXML);
+
+  return modifiedXML;
+}
+
+// 使用 Google Translate API 进行翻译的函数
+async function translateText(text, targetLang = 'ZH') {
+  const apiKey = 'YOUR_GOOGLE_TRANSLATE_API_KEY'; // 替换为您的 Google Translate API 密钥
+  const url = `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        q: text,
+        target: targetLang,
+        format: 'text'
+      })
     });
+
+    const result = await response.json();
+    if (result.data && result.data.translations.length > 0) {
+      return result.data.translations[0].translatedText;
+    } else {
+      return '';
+    }
+  } catch (error) {
+    console.error('Google Translation Error:', error);
+    return '';
+  }
 }
 
-// 使用 DeepL API 进行翻译
-function translateWithDeepL(texts, success, failure) {
-    let translated = [];
-    let remaining = texts.length;
-
-    for (let text of texts) {
-        let translateUrl = "https://api-free.deepl.com/v2/translate";
-
-        $httpClient.post({
-            url: translateUrl,
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
-            body: `auth_key=${deepLAuthKey}&text=${encodeURIComponent(text)}&source_lang=${sourceLang}&target_lang=${targetLang}`
-        }, function(error, response, data) {
-            if (error || response.status !== 200) {
-                console.log("DeepL 翻译请求失败，错误:", error);
-                translated.push("");
-            } else {
-                try {
-                    let json = JSON.parse(data);
-                    if (json.translations && json.translations.length > 0) {
-                        translated.push(json.translations[0].text);
-                    } else {
-                        translated.push("");
-                    }
-                } catch (e) {
-                    console.log("解析 DeepL 翻译响应失败，错误:", e);
-                    translated.push("");
-                }
-            }
-
-            remaining--;
-            if (remaining === 0) {
-                success(translated);
-            }
-        });
-    }
+// 延时函数，避免 API 速率限制
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
