@@ -157,6 +157,7 @@ if (!body) {
 }
 
 if (url.match(/\.vtt/)) {
+    console.log(`[Dualsub] Processing .vtt file for ${service}: ${url}`);
     if (setting.type == "Google") machine_subtitles("Google");
     if (setting.type == "DeepL") machine_subtitles("DeepL");
     if (setting.type == "External") external_subtitles();
@@ -177,6 +178,7 @@ async function machine_subtitles(type) {
         console.log(`[Dualsub] No dialogue found in .vtt for URL: ${url}`);
         $done({});
     }
+    console.log(`[Dualsub] Found ${dialogue.length} dialogue blocks`);
     let s_sentences = [];
     for (var i in dialogue) {
         let text = dialogue[i].replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d\n/, "").replace(/<\/*(c\.[^>]+|i|c)>/g, "").trim();
@@ -231,6 +233,7 @@ async function machine_subtitles(type) {
     }
 
     if (t_sentences.length > 0) {
+        console.log(`[Dualsub] Translated ${t_sentences.length} sentences`);
         for (var j in dialogue) {
             let patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`);
             let trans_text = type == "Google" ? t_sentences[j].replace(/^~\d+~\s*/, "") : t_sentences[j];
@@ -244,6 +247,7 @@ async function machine_subtitles(type) {
         settings[service].subtitles_tl = setting.tl;
         settings[service].subtitles_line = setting.line;
         $persistentStore.write(JSON.stringify(settings));
+        console.log(`[Dualsub] Subtitles updated and stored for ${url}`);
     }
     $done({ body });
 }
