@@ -1,5 +1,5 @@
 /*
-    Dualsub for Surge by Neurogram (Optimized for AMC+ with multi-line .vtt support)
+    Dualsub for Surge by Neurogram (Optimized for AMC+ with signed URL and multi-line .vtt support)
  
         - Disney+, Star+, HBO Max, Prime Video, YouTube, AMC machine translation bilingual subtitles (Google, DeepL)
         - Customized language support
@@ -9,109 +9,6 @@ let url = $request.url;
 let headers = $request.headers;
 
 let default_settings = {
-    Disney: {
-        type: "Official",
-        lang: "English [CC]",
-        sl: "auto",
-        tl: "English [CC]",
-        line: "f",
-        dkey: "null",
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    },
-    HBOMax: {
-        type: "Official",
-        lang: "English CC",
-        sl: "auto",
-        tl: "en-US SDH",
-        line: "s",
-        dkey: "null",
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    },
-    Hulu: {
-        type: "Google",
-        lang: "English",
-        sl: "auto",
-        tl: "zh-CN",
-        line: "f",
-        dkey: "null",
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    },
-    Netflix: {
-        type: "Google",
-        lang: "English",
-        sl: "auto",
-        tl: "en",
-        line: "s",
-        dkey: "null",
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    },
-    Paramount: {
-        type: "Google",
-        lang: "English",
-        sl: "auto",
-        tl: "en",
-        line: "s",
-        dkey: "null",
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    },
-    PrimeVideo: {
-        type: "Official",
-        lang: "English [CC]",
-        sl: "auto",
-        tl: "English [CC]",
-        line: "s",
-        dkey: "null",
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    },
-    YouTube: {
-        type: "Enable",
-        lang: "English",
-        sl: "auto",
-        tl: "en",
-        line: "sl"
-    },
     AMC: {
         type: "Google",
         lang: "English",
@@ -134,13 +31,6 @@ let default_settings = {
 let settings = $persistentStore.read() ? JSON.parse($persistentStore.read()) : default_settings;
 
 let service = "";
-if (url.match(/(dss|star)ott.com/)) service = "Disney";
-if (url.match(/hbo(maxcdn)*.com/)) service = "HBOMax";
-if (url.match(/huluim.com/)) service = "Hulu";
-if (url.match(/nflxvideo.net/)) service = "Netflix";
-if (url.match(/cbs(aa|i)video.com/)) service = "Paramount";
-if (url.match(/(cloudfront|akamaihd|avi-cdn).net/)) service = "PrimeVideo";
-if (url.match(/youtube.com/)) service = "YouTube";
 if (url.match(/house-fastly-signed-us-east-1-prod.brightcovecdn.com/)) service = "AMC";
 
 if (!service) $done({});
@@ -158,6 +48,10 @@ if (!body) {
 
 if (url.match(/\.vtt/)) {
     console.log(`[Dualsub] Processing .vtt file for ${service}: ${url}`);
+    if (!body.includes("WEBVTT")) {
+        console.log(`[Dualsub] Invalid .vtt content (no WEBVTT header): ${body.slice(0, 100)}`);
+        $done({});
+    }
     if (setting.type == "Google") machine_subtitles("Google");
     if (setting.type == "DeepL") machine_subtitles("DeepL");
     if (setting.type == "External") external_subtitles();
@@ -172,17 +66,21 @@ function external_subtitles() {
 }
 
 async function machine_subtitles(type) {
-    body = body.replace(/\r/g, "");  // 移除回车符，不合并多行
+    body = body.replace(/\r/g, "");  // 移除回车符
     let dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d\n(?:.*\n)+?(?=\n\n|\n?$)/g);  // 匹配完整字幕块
     if (!dialogue) {
-        console.log(`[Dualsub] No dialogue found in .vtt for URL: ${url}`);
+        console.log(`[Dualsub] No dialogue found in .vtt for URL: ${url}, body: ${body.slice(0, 200)}`);
         $done({});
     }
     console.log(`[Dualsub] Found ${dialogue.length} dialogue blocks`);
     let s_sentences = [];
     for (var i in dialogue) {
         let text = dialogue[i].replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d\n/, "").replace(/<\/*(c\.[^>]+|i|c)>/g, "").trim();
-        s_sentences.push(`${type == "Google" ? "~" + i + "~" : "&text="}${text}`);
+        if (text) s_sentences.push(`${type == "Google" ? "~" + i + "~" : "&text="}${text}`);
+    }
+    if (s_sentences.length === 0) {
+        console.log(`[Dualsub] No valid text to translate in .vtt`);
+        $done({});
     }
     s_sentences = groupAgain(s_sentences, type == "Google" ? 80 : 50);
     let t_sentences = [];
