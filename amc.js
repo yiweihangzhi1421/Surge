@@ -1,5 +1,5 @@
 /*
-    Dualsub for Surge by Neurogram (Modified for AMC+ with Signed URL support)
+    Dualsub for Surge by Neurogram (Optimized for AMC+ with multi-line .vtt support)
  
         - Disney+, Star+, HBO Max, Prime Video, YouTube, AMC machine translation bilingual subtitles (Google, DeepL)
         - Customized language support
@@ -141,7 +141,7 @@ if (url.match(/nflxvideo.net/)) service = "Netflix";
 if (url.match(/cbs(aa|i)video.com/)) service = "Paramount";
 if (url.match(/(cloudfront|akamaihd|avi-cdn).net/)) service = "PrimeVideo";
 if (url.match(/youtube.com/)) service = "YouTube";
-if (url.match(/house-fastly-signed-us-east-1-prod.brightcovecdn.com/)) service = "AMC";  // 精确匹配AMC+子域
+if (url.match(/house-fastly-signed-us-east-1-prod.brightcovecdn.com/)) service = "AMC";
 
 if (!service) $done({});
 
@@ -156,7 +156,7 @@ if (!body) {
     $done({});
 }
 
-if (url.match(/\.vtt/)) {  // 只处理 .vtt 文件
+if (url.match(/\.vtt/)) {
     if (setting.type == "Google") machine_subtitles("Google");
     if (setting.type == "DeepL") machine_subtitles("DeepL");
     if (setting.type == "External") external_subtitles();
@@ -171,16 +171,16 @@ function external_subtitles() {
 }
 
 async function machine_subtitles(type) {
-    body = body.replace(/\r/g, "").replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
-    let dialogue = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+/g);
+    body = body.replace(/\r/g, "");  // 移除回车符，不合并多行
+    let dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d\n(?:.*\n)+?(?=\n\n|\n?$)/g);  // 匹配完整字幕块
     if (!dialogue) {
         console.log(`[Dualsub] No dialogue found in .vtt for URL: ${url}`);
         $done({});
     }
-    let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g);
     let s_sentences = [];
     for (var i in dialogue) {
-        s_sentences.push(`${type == "Google" ? "~" + i + "~" : "&text="}${dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "")}`);
+        let text = dialogue[i].replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d\n/, "").replace(/<\/*(c\.[^>]+|i|c)>/g, "").trim();
+        s_sentences.push(`${type == "Google" ? "~" + i + "~" : "&text="}${text}`);
     }
     s_sentences = groupAgain(s_sentences, type == "Google" ? 80 : 50);
     let t_sentences = [];
@@ -198,14 +198,14 @@ async function machine_subtitles(type) {
                 if (trans.sentences) {
                     let sentences = trans.sentences;
                     for (var k in sentences) {
-                        if (sentences[k].trans) trans_result.push(sentences[k].trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"));
+                        if (sentences[k].trans) trans_result.push(sentences[k].trans.replace(/\n$/g, "").replace(/〜|～/g, "~"));
                     }
                 }
             } catch (error) {
                 console.log(`[Dualsub] Google Translate error: ${error}`);
             }
         }
-        if (trans_result.length > 0) t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
+        if (trans_result.length > 0) t_sentences = trans_result.join("\n").match(/~\d+~[^~]+/g) || trans_result;
     }
 
     if (type == "DeepL") {
@@ -224,20 +224,18 @@ async function machine_subtitles(type) {
         if (trans_result.length > 0) {
             for (var o in trans_result) {
                 for (var u in trans_result[o]) {
-                    t_sentences.push(trans_result[o][u].text.replace(/\n/g, " "));
+                    t_sentences.push(trans_result[o][u].text);
                 }
             }
         }
     }
 
     if (t_sentences.length > 0) {
-        let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n");
         for (var j in dialogue) {
-            let patt = new RegExp(`(${timeline[j]})`);
-            if (setting.line == "s") patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`);
-            let patt2 = new RegExp(`~${j}~\\s*(.+)`);
-            if (g_t_sentences.match(patt2) && type == "Google") body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`);
-            if (type == "DeepL") body = body.replace(patt, `$1\n${t_sentences[j]}`);
+            let patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`);
+            let trans_text = type == "Google" ? t_sentences[j].replace(/^~\d+~\s*/, "") : t_sentences[j];
+            if (setting.line == "s") body = body.replace(patt, `$1\n${trans_text}`);
+            if (setting.line == "f") body = body.replace(patt, `${trans_text}\n$1`);
         }
         settings[service].s_subtitles_url = url;
         settings[service].subtitles = body;
