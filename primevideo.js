@@ -1,123 +1,96 @@
 /*
-    Dualsub for Surge (Prime Video only, fixed format + full translation)
+    Dualsub for Surge - Prime Video
     Features:
-    - Support Prime Video subtitle (.vtt) injection
-    - English to Chinese (Google Translate)
-    - Dual-line display (EN on top, CN below)
-    - No persistent setting storage, no Shortcuts required
-    - Ensures WebVTT format validity with WEBVTT header and blank lines
+    - Auto-translate English VTT subtitles to Chinese
+    - Dual-line display: English + 中文
+    - Fully compliant WebVTT format
 */
 
 let url = $request.url
-let headers = $request.headers
-
 if (!url.match(/\.(cloudfront|akamaihd|avi-cdn|pv-cdn)\.net.*\.vtt$/)) $done({})
 
 let setting = {
-    type: "Google",
     sl: "en",
-    tl: "zh-CN",
-    line: "f"
+    tl: "zh-CN"
 }
 
 let body = $response.body
 if (!body) $done({})
 
+// 清理格式
 body = body.replace(/\r/g, "")
-body = body.replace(/(\d+:.+ --> \d+:.+\n.+)\n(.+)/g, "$1 $2")
-body = body.replace(/(\d+:.+ --> \d+:.+\n.+)\n(.+)/g, "$1 $2")
+body = body.replace(/<\/*(c\.[^>]+|i|c)>/g, "")
+body = body.trim()
 
-let dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d.+\n.+/g)
-if (!dialogue) $done({})
+// 提取字幕块
+let blocks = body.split(/\n{2,}/)
+let output = ["WEBVTT", ""]
 
-let timeline = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d.+/g)
+let timelines = []
+let originals = []
 
-let s_sentences = []
-for (let i in dialogue) {
-    s_sentences.push("~" + i + "~" + dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d.+\n/, ""))
+for (let block of blocks) {
+    let lines = block.split("\n")
+    if (lines.length < 2) continue
+    let time = lines[0].trim()
+    let content = lines.slice(1).join(" ").trim()
+    timelines.push(time)
+    originals.push(content)
 }
-s_sentences = groupAgain(s_sentences, 20)
 
-let trans_result = []
+// 分批翻译
+let groups = group(originals, 20)
+let translations = []
 
 ;(async () => {
-    for (let p in s_sentences) {
-        let success = false
-        let retries = 2
-        while (!success && retries > 0) {
-            try {
-                let options = {
-                    url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
-                    headers: {
-                        "User-Agent": "GoogleTranslate/6.29.59279"
-                    },
-                    body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
-                }
-                let trans = await send_request(options, "post")
-                if (trans.sentences) {
-                    for (let s of trans.sentences) {
-                        if (s.trans) trans_result.push(s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"))
-                    }
-                }
-                success = true
-            } catch (e) {
-                retries--
-            }
-        }
-    }
-
-    let t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g)
-    if (!t_sentences) return $done({ body })
-
-    let trans_map = {}
-    for (let ts of t_sentences) {
-        let match = ts.match(/~(\d+)~(.+)/)
-        if (match) trans_map[match[1]] = match[2]
-    }
-
-    let output = ["WEBVTT\n"]
-    for (let j in dialogue) {
-        output.push(timeline[j])
-        let orig = dialogue[j].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d.+\n/, "").trim()
-        let trans = trans_map[j] || ""
-        if (setting.line === "f") {
-            output.push(orig)
-            if (trans) output.push(trans)
+    for (let groupLines of groups) {
+        let q = groupLines.join("\n")
+        let res = await translateGoogle(q)
+        if (res) {
+            translations.push(...res)
         } else {
-            if (trans) output.push(trans)
-            output.push(orig)
+            translations.push(...new Array(groupLines.length).fill(""))
         }
-        output.push("") // blank line between entries
+    }
+
+    // 拼接输出
+    for (let i = 0; i < timelines.length; i++) {
+        output.push(timelines[i])
+        output.push(originals[i])
+        if (translations[i]) output.push(translations[i])
+        output.push("") // 空行分段
     }
 
     $done({ body: output.join("\n") })
 })()
 
-function send_request(options, method) {
-    return new Promise((resolve, reject) => {
-        if (method == "get") {
-            $httpClient.get(options, function (err, res, data) {
-                if (err) return reject("Error")
-                resolve(data)
-            })
-        }
-        if (method == "post") {
-            $httpClient.post(options, function (err, res, data) {
-                if (err) return reject("Error")
-                try {
-                    resolve(JSON.parse(data))
-                } catch {
-                    reject("Invalid JSON")
-                }
-            })
-        }
-    })
-}
-
-function groupAgain(data, num) {
+// 分组函数
+function group(arr, size) {
     let result = []
-    for (let i = 0; i < data.length; i += num) {
-        result.push(data.slice(i, i + num))
+    for (let i = 0; i < arr.length; i += size) {
+        result.push(arr.slice(i, i + size))
     }
     return result
+}
+
+// Google 翻译函数
+async function translateGoogle(q) {
+    let options = {
+        url: `https://translate.google.com/translate_a/single?client=gtx&sl=${setting.sl}&tl=${setting.tl}&dt=t`,
+        headers: { "User-Agent": "GoogleTranslate" },
+        body: `q=${encodeURIComponent(q)}`
+    }
+
+    return new Promise((resolve) => {
+        $httpClient.post(options, (err, resp, data) => {
+            if (err) return resolve(null)
+            try {
+                let obj = JSON.parse(data)
+                let lines = obj[0].map(i => i[0])
+                resolve(lines)
+            } catch {
+                resolve(null)
+            }
+        })
+    })
 }
