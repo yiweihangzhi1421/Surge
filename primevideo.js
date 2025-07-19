@@ -1,11 +1,11 @@
 /*
-    Dualsub for Surge (Prime Video only, with translation fix)
+    Dualsub for Surge (Prime Video only, fixed format + full translation)
     Features:
     - Support Prime Video subtitle (.vtt) injection
-    - Fixed: English to Chinese (Google Translate)
-    - Fixed: Dual-line display (EN on top, CN below)
+    - English to Chinese (Google Translate)
+    - Dual-line display (EN on top, CN below)
     - No persistent setting storage, no Shortcuts required
-    - Improved: translate all batches and handle partial failures
+    - Ensures WebVTT format validity with WEBVTT header and blank lines
 */
 
 let url = $request.url
@@ -24,17 +24,17 @@ let body = $response.body
 if (!body) $done({})
 
 body = body.replace(/\r/g, "")
-body = body.replace(/(\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+\n.+)\n(.+)/g, "$1 $2")
-body = body.replace(/(\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+\n.+)\n(.+)/g, "$1 $2")
+body = body.replace(/(\d+:.+ --> \d+:.+\n.+)\n(.+)/g, "$1 $2")
+body = body.replace(/(\d+:.+ --> \d+:.+\n.+)\n(.+)/g, "$1 $2")
 
-let dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+\n.+/g)
+let dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d.+\n.+/g)
 if (!dialogue) $done({})
 
-let timeline = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+/g)
+let timeline = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d.+/g)
 
 let s_sentences = []
 for (let i in dialogue) {
-    s_sentences.push("~" + i + "~" + dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+\n/, ""))
+    s_sentences.push("~" + i + "~" + dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d.+\n/, ""))
 }
 s_sentences = groupAgain(s_sentences, 20)
 
@@ -69,17 +69,28 @@ let trans_result = []
     let t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g)
     if (!t_sentences) return $done({ body })
 
-    let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n")
-
-    for (let j in dialogue) {
-        let patt = new RegExp(`(${timeline[j]})`)
-        let patt2 = new RegExp(`~${j}~\\s*(.+)`)
-        if (g_t_sentences.match(patt2)) {
-            body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`)
-        }
+    let trans_map = {}
+    for (let ts of t_sentences) {
+        let match = ts.match(/~(\d+)~(.+)/)
+        if (match) trans_map[match[1]] = match[2]
     }
 
-    $done({ body })
+    let output = ["WEBVTT\n"]
+    for (let j in dialogue) {
+        output.push(timeline[j])
+        let orig = dialogue[j].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d\d\d.+\n/, "").trim()
+        let trans = trans_map[j] || ""
+        if (setting.line === "f") {
+            output.push(orig)
+            if (trans) output.push(trans)
+        } else {
+            if (trans) output.push(trans)
+            output.push(orig)
+        }
+        output.push("") // blank line between entries
+    }
+
+    $done({ body: output.join("\n") })
 })()
 
 function send_request(options, method) {
