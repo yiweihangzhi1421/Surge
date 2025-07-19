@@ -1,9 +1,10 @@
 /*
-    Dualsub for Surge - Prime Video
+    Dualsub for Surge - Prime Video (with 206 partial response filter)
     Features:
     - Auto-translate English VTT subtitles to Chinese
     - Dual-line display: English + 中文
     - Fully compliant WebVTT format
+    - Ignores partial (206) responses to avoid subtitle fragment issues
 */
 
 let url = $request.url
@@ -15,7 +16,7 @@ let setting = {
 }
 
 let body = $response.body
-if (!body) $done({})
+if (!body || $response.status !== 200) $done({})
 
 // 清理格式
 body = body.replace(/\r/g, "")
