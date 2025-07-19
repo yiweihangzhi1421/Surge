@@ -11,7 +11,7 @@ let url = $request.url
 let headers = $request.headers
 
 // Only match Prime Video subtitle .vtt files
-if (!url.match(/\.(cloudfront|akamaihd|avi-cdn)\.net.*\.vtt$/)) $done({})
+if (!url.match(/\.(cloudfront|akamaihd|avi-cdn|pv-cdn)\.net.*\.vtt$/)) $done({})
 
 // Fixed config for Prime Video
 let setting = {
