@@ -30,10 +30,11 @@ let timelines = []
 let originals = []
 
 for (let block of blocks) {
-    let lines = block.split("\n")
-    if (lines.length < 2) continue
+    let lines = block.trim().split("\n")
+    if (!lines[0].includes("-->") || lines.length < 2) continue
     let time = lines[0].trim()
     let content = lines.slice(1).join(" ").trim()
+    if (!content) continue
     timelines.push(time)
     originals.push(content)
 }
@@ -53,18 +54,16 @@ let translations = []
         }
     }
 
-    // 拼接输出
     for (let i = 0; i < timelines.length; i++) {
         output.push(timelines[i])
         output.push(originals[i])
-        if (translations[i]) output.push(translations[i])
-        output.push("") // 空行分段
+        output.push(translations[i] || "")
+        output.push("")
     }
 
     $done({ body: output.join("\n") })
 })()
 
-// 分组函数
 function group(arr, size) {
     let result = []
     for (let i = 0; i < arr.length; i += size) {
@@ -73,7 +72,6 @@ function group(arr, size) {
     return result
 }
 
-// Google 翻译函数
 async function translateGoogle(q) {
     let options = {
         url: `https://translate.google.com/translate_a/single?client=gtx&sl=${setting.sl}&tl=${setting.tl}&dt=t`,
