@@ -1,7 +1,7 @@
 /*
-    Dualsub for Surge (Modified for Max only)
+    Dualsub for Surge (Modified for Max *.prd.media.h264.io)
     Features:
-    - Support Max (akm.prd.media.h264.io) subtitle .vtt injection
+    - Support Max (*.prd.media.h264.io) subtitle .vtt injection
     - Fixed: English to Chinese (Google Translate)
     - Fixed: Dual-line display (EN on top, CN below)
     - No persistent setting storage, no Shortcuts required
@@ -10,8 +10,8 @@
 let url = $request.url
 let headers = $request.headers
 
-// Only match Max subtitles
-if (!url.match(/akm\.prd\.media\.h264\.io.*\.vtt$/)) $done({})
+// Only match Max subtitles (*.prd.media.h264.io)
+if (!url.match(/\.prd\.media\.h264\.io.*\.vtt$/)) $done({})
 
 // Fixed config
 let setting = {
