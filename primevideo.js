@@ -1,91 +1,76 @@
 /*
-    Dualsub for Surge - Prime Video (with 206 partial response support)
-    Features:
-    - Auto-translate English VTT subtitles to Chinese
-    - Dual-line display: English + 中文
-    - Fully compliant WebVTT format
-    - Now supports translating 206 Partial Content responses (single or partial subtitle lines)
+    Prime Dualsub Script for Surge
+    - 支持 Partial Content
+    - 批量翻译每段字幕
+    - 自动插入双语显示（英文 + 中文）
 */
 
 let url = $request.url
 if (!url.match(/\.(cloudfront|akamaihd|avi-cdn|pv-cdn)\.net.*\.vtt$/)) $done({})
 
-let setting = {
-    sl: "en",
-    tl: "zh-CN"
-}
+if ($response.status !== 200 && $response.status !== 206) $done({})
 
 let body = $response.body
 if (!body) $done({})
 
-// 清理格式
 body = body.replace(/\r/g, "")
-body = body.replace(/<\/*(c\.[^>]+|i|c)>/g, "")
-body = body.trim()
+body = body.replace(/<\/*(c\.[^>]+|i|c)>/g, "").trim()
 
-// 提取字幕块
 let blocks = body.split(/\n{2,}/)
 let output = ["WEBVTT", ""]
+let times = []
+let texts = []
 
-let timelines = []
-let originals = []
-
-for (let block of blocks) {
-    let lines = block.trim().split("\n")
-    if (!lines[0].includes("-->") || lines.length < 2) continue
-    let time = lines[0].trim()
-    let content = lines.slice(1).join(" ").trim()
-    if (!content) continue
-    timelines.push(time)
-    originals.push(content)
+for (let b of blocks) {
+    let lines = b.split("\n")
+    if (lines.length < 2) continue
+    times.push(lines[0].trim())
+    texts.push(lines.slice(1).join(" ").trim())
 }
 
-// 单句也分批
-let groups = group(originals, 20)
+let batches = batch(texts, 20)
 let translations = []
 
 ;(async () => {
-    for (let groupLines of groups) {
-        let q = groupLines.join("\n")
-        let res = await translateGoogle(q)
+    for (let part of batches) {
+        let res = await translate(part.join("\n"))
         if (res) {
             translations.push(...res)
         } else {
-            translations.push(...new Array(groupLines.length).fill(""))
+            translations.push(...new Array(part.length).fill(""))
         }
     }
 
-    for (let i = 0; i < timelines.length; i++) {
-        output.push(timelines[i])
-        output.push(originals[i])
-        output.push(translations[i] || "")
+    for (let i = 0; i < times.length; i++) {
+        output.push(times[i])
+        output.push(texts[i])
+        if (translations[i]) output.push(translations[i])
         output.push("")
     }
 
     $done({ body: output.join("\n") })
 })()
 
-function group(arr, size) {
-    let result = []
+function batch(arr, size) {
+    let out = []
     for (let i = 0; i < arr.length; i += size) {
-        result.push(arr.slice(i, i + size))
+        out.push(arr.slice(i, i + size))
     }
-    return result
+    return out
 }
 
-async function translateGoogle(q) {
-    let options = {
-        url: `https://translate.google.com/translate_a/single?client=gtx&sl=${setting.sl}&tl=${setting.tl}&dt=t`,
-        headers: { "User-Agent": "GoogleTranslate" },
-        body: `q=${encodeURIComponent(q)}`
-    }
-
-    return new Promise((resolve) => {
-        $httpClient.post(options, (err, resp, data) => {
+function translate(q) {
+    return new Promise(resolve => {
+        let options = {
+            url: "https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=en&tl=zh-CN",
+            headers: { "User-Agent": "GoogleTranslate" },
+            body: "q=" + encodeURIComponent(q)
+        }
+        $httpClient.post(options, (err, res, data) => {
             if (err) return resolve(null)
             try {
-                let obj = JSON.parse(data)
-                let lines = obj[0].map(i => i[0])
+                let parsed = JSON.parse(data)
+                let lines = parsed[0].map(i => i[0])
                 resolve(lines)
             } catch {
                 resolve(null)
