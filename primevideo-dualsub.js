@@ -1,112 +1,77 @@
 // ==UserScript==
 // @name         Prime Video Dualsub
-// @description  Google翻译 + 中文在上，英文在下，内置设置，无需快捷指令
-// @version      1.0
-// @author       linshaohu
+// @namespace    https://github.com/yiweihangzhi1421/Surge
+// @version      1.0.0
+// @description  Prime Video 字幕中英文双语（中文在上，英文在下）自动翻译脚本
 // @match        *://*.cloudfront.net/*
 // @match        *://*.akamaihd.net/*
 // @match        *://*.avi-cdn.net/*
 // @match        *://*.pv-cdn.net/*
+// @grant        none
 // ==/UserScript==
 
-let url = $request.url;
-let headers = $request.headers;
+let body = $response.body.replace(/\r/g, "").replace(/<\/*(c\.[^>]+|i|c)>/g, "").trim()
+if (!body.startsWith("WEBVTT")) return $done({ body })
 
-let default_settings = {
-    PrimeVideo: {
-        type: "Google",
-        lang: "English [CC]",
-        sl: "auto",
-        tl: "zh-CN",
-        line: "f",  // 中文在上，英文在下
-        dkey: "null",
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    }
-};
-
-let settings = default_settings;
-let service = "PrimeVideo";
-let setting = settings[service];
-
-if (url.match(/\.m3u8/)) $done({});
-
-if (setting.type === "Disable") $done({});
-
-let body = $response.body;
-if (!body) $done({});
-
-if (url.match(/\.vtt/)) {
-    body = body.replace(/\r/g, "");
-    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
-
-    let dialogue = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+/g);
-    if (!dialogue) $done({});
-
-    let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g);
-    let s_sentences = [];
-    for (var i in dialogue) {
-        s_sentences.push("~" + i + "~" + dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, ""));
-    }
-
-    s_sentences = groupAgain(s_sentences, 80);
-
-    (async () => {
-        let t_sentences = [];
-        for (var p in s_sentences) {
-            let options = {
-                url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}`,
-                headers: { "User-Agent": "GoogleTranslate/6.29 (iOS)" },
-                body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
-            };
-
-            let trans = await send_request(options, "post");
-            if (trans.sentences) {
-                for (var k in trans.sentences) {
-                    if (trans.sentences[k].trans)
-                        t_sentences.push(trans.sentences[k].trans.replace(/\n$/g, "").replace(/\n/g, " "));
-                }
-            }
-        }
-
-        let g_t_sentences = t_sentences.join(" ").match(/~\d+~[^~]+/g);
-        if (!g_t_sentences) $done({ body });
-
-        for (var j in dialogue) {
-            let patt = new RegExp(`(${timeline[j]})`);
-            let patt2 = new RegExp(`~${j}~\\s*(.+)`);
-            if (g_t_sentences[j]) body = body.replace(patt, `$1\n${g_t_sentences[j].replace(`~${j}~`, "")}`);
-        }
-
-        $done({ body });
-    })();
+function group(arr, size) {
+  let out = []
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size))
+  }
+  return out
 }
 
-function send_request(options, method) {
-    return new Promise((resolve, reject) => {
-        if (method === "get") {
-            $httpClient.get(options, function (err, resp, data) {
-                if (err) reject(err); else resolve(data);
-            });
-        }
-        if (method === "post") {
-            $httpClient.post(options, function (err, resp, data) {
-                if (err) reject(err); else resolve(JSON.parse(data));
-            });
-        }
-    });
+function translateGoogle(q) {
+  return new Promise(resolve => {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=zh-CN&dt=t&q=${encodeURIComponent(q)}`
+    $httpClient.get(url, (err, resp, data) => {
+      if (err || resp.status !== 200) return resolve(null)
+      try {
+        const json = JSON.parse(data)
+        const result = json[0].map(line => line[0])
+        resolve(result)
+      } catch {
+        resolve(null)
+      }
+    })
+  })
 }
 
-function groupAgain(data, num) {
-    let result = [];
-    for (let i = 0; i < data.length; i += num) {
-        result.push(data.slice(i, i + num));
-    }
-    return result;
+let blocks = body.split(/\n{2,}/)
+let output = ["WEBVTT", ""]
+let timelines = []
+let originals = []
+
+for (let block of blocks) {
+  let lines = block.split("\n")
+  if (lines.length < 2) continue
+  let time = lines[0].trim()
+  let text = lines.slice(1).join(" ").trim()
+  if (!text) continue
+  timelines.push(time)
+  originals.push(text)
 }
+
+let groups = group(originals, 20)
+let translations = []
+
+;(async () => {
+  for (let g of groups) {
+    let q = g.join("\n")
+    let translated = await translateGoogle(q)
+    if (translated) {
+      translations.push(...translated)
+    } else {
+      translations.push(...new Array(g.length).fill(""))
+    }
+  }
+
+  for (let i = 0; i < timelines.length; i++) {
+    output.push(timelines[i])
+    if (translations[i]) output.push(translations[i])
+    output.push(originals[i])
+    output.push("")
+  }
+
+  $done({ body: output.join("\n") })
+})()
