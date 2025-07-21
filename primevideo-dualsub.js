@@ -1,96 +1,70 @@
-// Prime Video Dualsub for Surge
-// Fixed configuration: Google Translate, Chinese on top, English below
+// Prime Video 双语字幕脚本（固定 Google 翻译 + 中文在上）
+// 由 ChatGPT 定制适配 yiweihangzhi1421/Surge 仓库
 
 let url = $request.url;
 let headers = $request.headers;
-
-let setting = {
-  type: "Google",
-  lang: "English [CC]",
-  sl: "auto",
-  tl: "zh-CN",
-  line: "f",
-  dkey: "null",
-  s_subtitles_url: "null",
-  t_subtitles_url: "null",
-  subtitles: "null",
-  subtitles_type: "null",
-  subtitles_sl: "null",
-  subtitles_tl: "null",
-  subtitles_line: "null",
-  external_subtitles: "null"
-};
-
-if (!url.match(/\.vtt/)) $done({});
-
 let body = $response.body;
+
 if (!body) $done({});
 
+const settings = {
+  type: "Google", // 使用 Google 翻译
+  sl: "auto",      // 源语言自动识别
+  tl: "zh-CN",     // 目标语言中文
+  line: "f"         // 中文在上，英文在下
+};
+
+// 合并字幕行
 body = body.replace(/\r/g, "");
-body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
-body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
+body = body.replace(/(\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d+\n.+)\n(.+)/g, "$1 $2");
 
-let dialogue = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+/g);
-if (!dialogue) $done({});
+const dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d+\n.+/g);
+const timeline = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d+/g);
 
-let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g);
+if (!dialogue || !timeline) $done({ body });
 
-let s_sentences = dialogue.map((d, i) => `~${i}~${d.replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "")}`);
-s_sentences = groupAgain(s_sentences, 80);
+let s_sentences = dialogue.map((line, i) => `~${i}~` + line.replace(/<[^>]+>/g, "").replace(/^\d+:.*\n/, ""));
+s_sentences = group(s_sentences, 80);
+
+let trans_result = [];
 
 (async () => {
-  let t_sentences = [];
-  for (let p in s_sentences) {
-    let options = {
-      url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&dj=1&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
-      headers: {
-        "User-Agent": "Mozilla/5.0"
-      },
-      body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
-    };
+  for (const group of s_sentences) {
+    const q = encodeURIComponent(group.join("\n"));
+    const res = await $httpClient.post({
+      url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}`,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `q=${q}`
+    });
 
-    let trans = await send_request(options, "post");
-    if (trans.sentences) {
-      trans.sentences.forEach(s => {
-        if (s.trans) t_sentences.push(s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"));
-      });
+    try {
+      const json = JSON.parse(res.body);
+      const parts = json[0].map(x => x[0]);
+      trans_result.push(...parts.join("").match(/~\d+~[^~]+/g));
+    } catch (e) {}
+  }
+
+  const t_map = {};
+  if (trans_result) {
+    for (const entry of trans_result) {
+      const match = entry.match(/~(\d+)~(.+)/);
+      if (match) t_map[match[1]] = match[2].trim();
     }
   }
 
-  if (t_sentences.length > 0) {
-    let g_t_sentences = t_sentences.join(" ").match(/~\d+~[^~]+/g);
-    for (let j in dialogue) {
-      let patt = new RegExp(`(${timeline[j]})`);
-      let patt2 = new RegExp(`~${j}~\\s*(.+)`);
-      if (g_t_sentences && g_t_sentences[j]) {
-        let translated = g_t_sentences[j].replace(new RegExp(`~${j}~`), "");
-        body = body.replace(patt, `$1\n${translated}\n${dialogue[j].replace(/${timeline[j]}\n/, "")}`);
-      }
-    }
+  for (let i = 0; i < dialogue.length; i++) {
+    const trans = t_map[i];
+    if (!trans) continue;
+    const patt = new RegExp(`(${timeline[i]})`);
+    if (settings.line === "f") body = body.replace(patt, `$1\n${trans}`);
+    else body = body.replace(patt, `$1\n${dialogue[i].replace(/^\d+:.*\n/, "").trim()}\n${trans}`);
   }
+
   $done({ body });
 })();
 
-function send_request(options, method) {
-  return new Promise((resolve, reject) => {
-    if (method === "get") {
-      $httpClient.get(options, (e, r, d) => {
-        if (e) reject(e);
-        else resolve(d);
-      });
-    } else {
-      $httpClient.post(options, (e, r, d) => {
-        if (e) reject(e);
-        else resolve(JSON.parse(d));
-      });
-    }
-  });
-}
-
-function groupAgain(data, num) {
-  let result = [];
-  for (let i = 0; i < data.length; i += num) {
-    result.push(data.slice(i, i + num));
-  }
+function group(arr, num) {
+  const result = [];
+  for (let i = 0; i < arr.length; i += num) result.push(arr.slice(i, i + num));
   return result;
 }
