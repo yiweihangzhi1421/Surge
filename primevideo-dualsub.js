@@ -1,70 +1,112 @@
-// Prime Video 双语字幕脚本（固定 Google 翻译 + 中文在上）
-// 由 ChatGPT 定制适配 yiweihangzhi1421/Surge 仓库
+// ==UserScript==
+// @name         Prime Video Dualsub
+// @description  Google翻译 + 中文在上，英文在下，内置设置，无需快捷指令
+// @version      1.0
+// @author       linshaohu
+// @match        *://*.cloudfront.net/*
+// @match        *://*.akamaihd.net/*
+// @match        *://*.avi-cdn.net/*
+// @match        *://*.pv-cdn.net/*
+// ==/UserScript==
 
 let url = $request.url;
 let headers = $request.headers;
-let body = $response.body;
 
-if (!body) $done({});
-
-const settings = {
-  type: "Google", // 使用 Google 翻译
-  sl: "auto",      // 源语言自动识别
-  tl: "zh-CN",     // 目标语言中文
-  line: "f"         // 中文在上，英文在下
+let default_settings = {
+    PrimeVideo: {
+        type: "Google",
+        lang: "English [CC]",
+        sl: "auto",
+        tl: "zh-CN",
+        line: "f",  // 中文在上，英文在下
+        dkey: "null",
+        s_subtitles_url: "null",
+        t_subtitles_url: "null",
+        subtitles: "null",
+        subtitles_type: "null",
+        subtitles_sl: "null",
+        subtitles_tl: "null",
+        subtitles_line: "null",
+        external_subtitles: "null"
+    }
 };
 
-// 合并字幕行
-body = body.replace(/\r/g, "");
-body = body.replace(/(\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d+\n.+)\n(.+)/g, "$1 $2");
+let settings = default_settings;
+let service = "PrimeVideo";
+let setting = settings[service];
 
-const dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d+\n.+/g);
-const timeline = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d+/g);
+if (url.match(/\.m3u8/)) $done({});
 
-if (!dialogue || !timeline) $done({ body });
+if (setting.type === "Disable") $done({});
 
-let s_sentences = dialogue.map((line, i) => `~${i}~` + line.replace(/<[^>]+>/g, "").replace(/^\d+:.*\n/, ""));
-s_sentences = group(s_sentences, 80);
+let body = $response.body;
+if (!body) $done({});
 
-let trans_result = [];
+if (url.match(/\.vtt/)) {
+    body = body.replace(/\r/g, "");
+    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
 
-(async () => {
-  for (const group of s_sentences) {
-    const q = encodeURIComponent(group.join("\n"));
-    const res = await $httpClient.post({
-      url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&sl=${settings.sl}&tl=${settings.tl}`,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `q=${q}`
-    });
+    let dialogue = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+/g);
+    if (!dialogue) $done({});
 
-    try {
-      const json = JSON.parse(res.body);
-      const parts = json[0].map(x => x[0]);
-      trans_result.push(...parts.join("").match(/~\d+~[^~]+/g));
-    } catch (e) {}
-  }
-
-  const t_map = {};
-  if (trans_result) {
-    for (const entry of trans_result) {
-      const match = entry.match(/~(\d+)~(.+)/);
-      if (match) t_map[match[1]] = match[2].trim();
+    let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g);
+    let s_sentences = [];
+    for (var i in dialogue) {
+        s_sentences.push("~" + i + "~" + dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, ""));
     }
-  }
 
-  for (let i = 0; i < dialogue.length; i++) {
-    const trans = t_map[i];
-    if (!trans) continue;
-    const patt = new RegExp(`(${timeline[i]})`);
-    if (settings.line === "f") body = body.replace(patt, `$1\n${trans}`);
-    else body = body.replace(patt, `$1\n${dialogue[i].replace(/^\d+:.*\n/, "").trim()}\n${trans}`);
-  }
+    s_sentences = groupAgain(s_sentences, 80);
 
-  $done({ body });
-})();
+    (async () => {
+        let t_sentences = [];
+        for (var p in s_sentences) {
+            let options = {
+                url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}`,
+                headers: { "User-Agent": "GoogleTranslate/6.29 (iOS)" },
+                body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
+            };
 
-function group(arr, num) {
-  const result = [];
-  for (let i = 0; i < arr.length; i += num) result.push(arr.slice(i, i + num));
-  return result;
+            let trans = await send_request(options, "post");
+            if (trans.sentences) {
+                for (var k in trans.sentences) {
+                    if (trans.sentences[k].trans)
+                        t_sentences.push(trans.sentences[k].trans.replace(/\n$/g, "").replace(/\n/g, " "));
+                }
+            }
+        }
+
+        let g_t_sentences = t_sentences.join(" ").match(/~\d+~[^~]+/g);
+        if (!g_t_sentences) $done({ body });
+
+        for (var j in dialogue) {
+            let patt = new RegExp(`(${timeline[j]})`);
+            let patt2 = new RegExp(`~${j}~\\s*(.+)`);
+            if (g_t_sentences[j]) body = body.replace(patt, `$1\n${g_t_sentences[j].replace(`~${j}~`, "")}`);
+        }
+
+        $done({ body });
+    })();
+}
+
+function send_request(options, method) {
+    return new Promise((resolve, reject) => {
+        if (method === "get") {
+            $httpClient.get(options, function (err, resp, data) {
+                if (err) reject(err); else resolve(data);
+            });
+        }
+        if (method === "post") {
+            $httpClient.post(options, function (err, resp, data) {
+                if (err) reject(err); else resolve(JSON.parse(data));
+            });
+        }
+    });
+}
+
+function groupAgain(data, num) {
+    let result = [];
+    for (let i = 0; i < data.length; i += num) {
+        result.push(data.slice(i, i + num));
+    }
+    return result;
 }
