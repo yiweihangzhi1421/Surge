@@ -1,88 +1,124 @@
+let headers = $request.headers;
 let url = $request.url;
+
+// === ✅ 解码响应体，支持 Loon / Surge / QX ===
 let raw = $response.body;
 let body;
 
-// ✅ 自动兼容 Loon 中 base64 编码或纯文本情况
 try {
   if (typeof raw === "string") {
-    // 判断是否为 base64 编码格式（含大量 A-Z0-9+/）
-    if (/^[A-Za-z0-9+/=\s]+$/.test(raw.slice(0, 200))) {
-      body = atob(raw);
-    } else {
-      body = raw; // 直接处理纯文本
-    }
-  } else {
     body = raw;
+  } else {
+    body = Buffer.from(raw).toString("utf-8");
   }
 } catch (e) {
-  console.log("[解码失败] 跳过该请求", e);
+  console.log("[解码失败] 跳过该请求");
   $done({});
+  return;
 }
 
-let setting = {
-  sl: "auto",
-  tl: "zh-CN",
-  line: "f" // f = 中文在上，英文在下；s = 英文在上，中文在下
+// === ✅ 固定设置：Google 翻译，中文字幕在上方 ===
+let settings = {
+  Netflix: {
+    type: "Google",
+    sl: "auto",
+    tl: "zh-CN",
+    line: "f" // 中文在上，英文在下；如改"s"则相反
+  }
 };
 
-if (!body || !body.match(/\d+:\d\d:\d\d\.\d+ -->.+\n.+/g)) $done({});
-if (url.includes(".m3u8")) $done({});
+let service = "Netflix";
+let setting = settings[service];
 
-(async () => {
+// === ✅ 拦截非字幕内容直接跳过 ===
+if (!body || !body.match(/\d+:\d\d:\d\d\.\d{3} -->.+line.+\n.+/g)) $done({});
+if (setting.type === "Disable") $done({});
+if (setting.type !== "Official" && url.match(/\.m3u8/)) $done({});
+
+if (url.match(/\.(web)?vtt/) || service === "Netflix") {
+  machine_subtitles();
+}
+
+async function machine_subtitles() {
   body = body.replace(/\r/g, "");
-  body = body.replace(/(\d+:\d\d:\d\d\.\d+ --> \d+:\d\d:\d\d\.\d+\n.+)\n(.+)/g, "$1 $2");
+  body = body.replace(/(\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+)\n(.+)/g, "$1 $2");
 
-  let dialogue = body.match(/\d+:\d\d:\d\d\.\d+ --> \d+:\d\d:\d\d\.\d+\n.+/g);
-  if (!dialogue) return $done({});
+  let dialogue = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+/g);
+  if (!dialogue) $done({});
 
-  let timeline = body.match(/\d+:\d\d:\d\d\.\d+ --> \d+:\d\d:\d\d\.\d+/g);
+  let timeline = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+/g);
   let s_sentences = [];
 
   for (let i in dialogue) {
     let clean = dialogue[i]
-      .replace(/<[^>]+>/g, "")
-      .replace(/\d+:\d\d:\d\d\.\d+ --> \d+:\d\d:\d\d\.\d+\n/, "");
+      .replace(/<\/*(c\.[^>]+|i|c)>/g, "")
+      .replace(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n/, "");
     s_sentences.push("~" + i + "~" + clean);
   }
 
   s_sentences = groupAgain(s_sentences, 80);
+
+  let t_sentences = [];
   let trans_result = [];
 
-  for (let group of s_sentences) {
+  for (let p in s_sentences) {
     let options = {
-      url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}`,
+      url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}`,
       method: "POST",
       headers: { "User-Agent": "Mozilla/5.0" },
-      body: `q=${encodeURIComponent(group.join("\n"))}`
+      body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
     };
 
-    let res = await $task.fetch(options);
-    let data = JSON.parse(res.body);
-    for (let s of data.sentences) {
-      if (s.trans) {
-        trans_result.push(s.trans.replace(/〜|～/g, "~"));
+    let trans = await send_request(options);
+    if (trans.sentences) {
+      for (let s of trans.sentences) {
+        if (s.trans) {
+          trans_result.push(
+            s.trans
+              .replace(/\n$/g, "")
+              .replace(/\n/g, " ")
+              .replace(/〜|～/g, "~")
+          );
+        }
       }
     }
   }
 
-  let t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
-  if (!t_sentences) return $done({ body });
+  if (trans_result.length > 0) {
+    t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
+  }
 
-  let g_t_sentences = t_sentences.join("\n");
+  if (t_sentences.length > 0) {
+    let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n");
 
-  for (let j in dialogue) {
-    let patt = new RegExp(`(${timeline[j]})`);
-    let patt2 = new RegExp(`~${j}~\\s*(.+)`);
-    let match = g_t_sentences.match(patt2);
-    if (match) {
-      // 中文在上，英文在下
-      body = body.replace(patt, `${match[1]}\n$1`);
+    for (let j in dialogue) {
+      let patt = new RegExp(`(${timeline[j]})`);
+      if (setting.line === "s") {
+        patt = new RegExp(dialogue[j].replace(/[[\]()?]/g, "\\$&"));
+      }
+
+      let patt2 = new RegExp(`~${j}~\\s*(.+)`);
+      if (g_t_sentences.match(patt2)) {
+        // 中文在上，英文在下
+        body = body.replace(patt, `${g_t_sentences.match(patt2)[1]}\n$1`);
+      }
     }
   }
 
   $done({ body });
+}
 
-})();
+function send_request(options) {
+  return new Promise((resolve) => {
+    $task.fetch(options).then((response) => {
+      try {
+        resolve(options.method === "GET" ? response.body : JSON.parse(response.body));
+      } catch (e) {
+        resolve({});
+      }
+    });
+  });
+}
 
 function groupAgain(data, num) {
   let result = [];
