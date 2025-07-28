@@ -1,110 +1,158 @@
-let rawBody = $response.body;
-let body;
+/*
+Netflix Dualsub for Surge by Neurogram (MODIFIED)
+- Platform: Netflix
+- Translation: Google
+- Format: Chinese (Simplified) on top, English below
+- No Shortcuts, all settings hardcoded
+*/
 
-try {
-  // 判断是否支持 TextDecoder（Loon 3.3.2 支持）
-  if (typeof rawBody === "string") {
-    body = rawBody;
-  } else if (typeof TextDecoder !== "undefined") {
-    body = new TextDecoder("utf-8").decode(rawBody);
-  } else {
-    console.log("TextDecoder 不可用");
-    $done({});
+let url = $request.url;
+let headers = $request.headers;
+
+let default_settings = {
+  Netflix: {
+    type: "Google",          // Use Google Translate
+    lang: "English",         // Original subtitle language
+    sl: "auto",              // Auto detect source language
+    tl: "zh-CN",             // Target language: Simplified Chinese
+    line: "f",               // f: Chinese on top, English below
+    dkey: "null",
+    s_subtitles_url: "null",
+    t_subtitles_url: "null",
+    subtitles: "null",
+    subtitles_type: "null",
+    subtitles_sl: "null",
+    subtitles_tl: "null",
+    subtitles_line: "null",
+    external_subtitles: "null"
+  },
+  General: {
+    service: "null",
+    type: "Google",
+    lang: "English",
+    sl: "auto",
+    tl: "en",
+    line: "s",
+    dkey: "null",
+    s_subtitles_url: "null",
+    t_subtitles_url: "null",
+    subtitles: "null",
+    subtitles_type: "null",
+    subtitles_sl: "null",
+    subtitles_tl: "null",
+    subtitles_line: "null",
+    external_subtitles: "null"
   }
-} catch (e) {
-  console.log("解码失败：" + e);
-  $done({});
-  return;
+};
+
+let settings = $persistentStore.read();
+if (!settings) settings = default_settings;
+if (typeof settings === "string") settings = JSON.parse(settings);
+
+let service = "";
+if (url.match(/nflxvideo.net/)) service = "Netflix";
+if (!service) $done({});
+
+if (!settings[service]) settings[service] = default_settings[service];
+let setting = settings[service];
+
+if (url.match(/action=get/)) {
+  delete setting.t_subtitles_url;
+  delete setting.subtitles;
+  delete setting.external_subtitles;
+  $done({ response: { body: JSON.stringify(setting), headers: { "Content-Type": "application/json" } } });
 }
 
-// 如果不是 VTT 格式，跳过
-if (!body || !body.match(/\d+:\d\d:\d\d\.\d{3} -->.+line.+\n.+/g)) {
-  $done({});
-  return;
+if (url.match(/action=set/)) {
+  let new_setting = JSON.parse($request.body);
+  if (new_setting.type != "External") settings[service].external_subtitles = "null";
+  if (new_setting.type == "Reset") new_setting = default_settings[service];
+  if (new_setting.service && service == "General") settings[service].service = new_setting.service.replace(/\r/g, "");
+  if (new_setting.type) settings[service].type = new_setting.type;
+  if (new_setting.lang) settings[service].lang = new_setting.lang;
+  if (new_setting.sl) settings[service].sl = new_setting.sl;
+  if (new_setting.tl) settings[service].tl = new_setting.tl;
+  if (new_setting.line) settings[service].line = new_setting.line;
+  if (new_setting.dkey && service != "YouTube") settings[service].dkey = new_setting.dkey;
+  if (new_setting.s_subtitles_url) settings[service].s_subtitles_url = new_setting.s_subtitles_url;
+  if (new_setting.t_subtitles_url) settings[service].t_subtitles_url = new_setting.t_subtitles_url;
+  if (new_setting.subtitles) settings[service].subtitles = new_setting.subtitles;
+  if (new_setting.subtitles_type) settings[service].subtitles_type = new_setting.subtitles_type;
+  if (new_setting.subtitles_sl) settings[service].subtitles_sl = new_setting.subtitles_sl;
+  if (new_setting.subtitles_tl) settings[service].subtitles_tl = new_setting.subtitles_tl;
+  if (new_setting.subtitles_line) settings[service].subtitles_line = new_setting.subtitles_line;
+  if (new_setting.external_subtitles) settings[service].external_subtitles = new_setting.external_subtitles.replace(/\r/g, "");
+  $persistentStore.write(JSON.stringify(settings));
+  delete settings[service].t_subtitles_url;
+  delete settings[service].subtitles;
+  delete settings[service].external_subtitles;
+  $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } });
 }
 
-// 配置翻译行为：英文在上，中文字幕在下
-const sl = "auto";
-const tl = "zh-CN";
-const lineOrder = "s"; // "s" 英文在上，"f" 中文在上
+if (setting.type == "Disable") $done({});
+if (setting.type != "Official" && url.match(/\.m3u8/)) $done({});
+let body = $response.body;
+if (!body) $done({});
 
-translate();
+if (setting.type == "Google") {
+  body = body.replace(/\r/g, "").replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d+\n.+)\n(.+)/g, "$1 $2");
+  let dialogue = body.match(/\d+:\d\d:\d\d.\d+ --> \d+:\d\d:\d\d.\d+\n.+/g);
+  if (!dialogue) $done({});
+  let timeline = body.match(/\d+:\d\d:\d\d.\d+ --> \d+:\d\d:\d\d.\d+/g);
 
-async function translate() {
-  body = body.replace(/\r/g, "").replace(/(\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+)\n(.+)/g, "$1 $2");
+  let s_sentences = dialogue.map((line, i) => `~${i}~` + line.replace(/<[^>]+>/g, "").replace(/^.*\n/, ""));
+  s_sentences = groupAgain(s_sentences, 80);
 
-  const dialogue = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+/g);
-  const timeline = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+/g);
-
-  if (!dialogue || !timeline) {
-    $done({});
-    return;
-  }
-
-  let sents = [];
-  for (let i in dialogue) {
-    const text = dialogue[i]
-      .replace(/<\/*(c\.[^>]+|i|c)>/g, "")
-      .replace(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n/, "");
-    sents.push(`~${i}~${text}`);
-  }
-
-  const grouped = group(sents, 80);
-  let result = [];
-
-  for (let group of grouped) {
-    const res = await translateGoogle(group.join("\n"));
-    if (res.sentences) {
-      for (let s of res.sentences) {
-        if (s.trans) {
-          result.push(
-            s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~")
-          );
+  let trans_result = [];
+  (async () => {
+    for (let group of s_sentences) {
+      let res = await send_request({
+        url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}&ie=UTF-8&oe=UTF-8`,
+        headers: { "User-Agent": "GoogleTranslate/6.29 (iOS)" },
+        body: `q=${encodeURIComponent(group.join("\n"))}`
+      }, "post");
+      if (res.sentences) {
+        for (let s of res.sentences) {
+          if (s.trans) trans_result.push(s.trans.replace(/〜|～/g, "~"));
         }
       }
     }
-  }
+    let t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
+    if (!t_sentences) $done({ body });
 
-  const translations = result.join(" ").match(/~\d+~[^~]+/g);
-  if (!translations) {
-    $done({});
-    return;
-  }
-
-  for (let j in dialogue) {
-    const patt = new RegExp(`(${timeline[j]}(\\n.+)+)`);
-    const match = new RegExp(`~${j}~\\s*(.+)`);
-    const lineTrans = translations.find(x => x.match(match));
-    if (lineTrans) {
-      const cn = lineTrans.match(match)[1];
-      const en = dialogue[j].replace(/.+\n/, "").trim();
-      const full = lineOrder === "f" ? `${cn}\n${timeline[j]}\n${en}` : `${en}\n${timeline[j]}\n${cn}`;
-      body = body.replace(patt, full);
+    for (let j in dialogue) {
+      let patt = new RegExp("(" + timeline[j].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")");
+      let patt2 = new RegExp("~" + j + "~\\s*(.+)");
+      let t_line = t_sentences.find(l => l.match(patt2));
+      if (t_line) {
+        let translated = t_line.match(patt2)[1];
+        if (setting.line == "f") {
+          body = body.replace(patt, `$1\n${translated}`);
+        } else {
+          body = body.replace(patt, `$1\n${translated}`);
+        }
+      }
     }
-  }
-
+    $done({ body });
+  })();
+} else {
   $done({ body });
 }
 
-function translateGoogle(query) {
-  return $task.fetch({
-    url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${sl}&tl=${tl}`,
-    method: "POST",
-    headers: { "User-Agent": "Mozilla/5.0" },
-    body: `q=${encodeURIComponent(query)}`
-  }).then(res => {
-    try {
-      return JSON.parse(res.body);
-    } catch (e) {
-      return {};
+function send_request(options, method) {
+  return new Promise((resolve, reject) => {
+    if (method === "get") {
+      $httpClient.get(options, (err, res, data) => err ? reject(err) : resolve(data));
+    } else {
+      $httpClient.post(options, (err, res, data) => err ? reject(err) : resolve(JSON.parse(data)));
     }
   });
 }
 
-function group(arr, size) {
+function groupAgain(data, num) {
   let result = [];
-  for (let i = 0; i < arr.length; i += size) {
-    result.push(arr.slice(i, i + size));
+  for (let i = 0; i < data.length; i += num) {
+    result.push(data.slice(i, i + num));
   }
   return result;
 }
