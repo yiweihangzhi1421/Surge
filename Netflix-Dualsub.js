@@ -2,25 +2,31 @@ let rawBody = $response.body;
 let body;
 
 try {
-  body = typeof rawBody === "string"
-    ? rawBody
-    : new TextDecoder("utf-8").decode(rawBody);
+  // 判断是否支持 TextDecoder（Loon 3.3.2 支持）
+  if (typeof rawBody === "string") {
+    body = rawBody;
+  } else if (typeof TextDecoder !== "undefined") {
+    body = new TextDecoder("utf-8").decode(rawBody);
+  } else {
+    console.log("TextDecoder 不可用");
+    $done({});
+  }
 } catch (e) {
-  console.log("解码失败");
+  console.log("解码失败：" + e);
   $done({});
   return;
 }
 
-// 匹配 Netflix 字幕格式
+// 如果不是 VTT 格式，跳过
 if (!body || !body.match(/\d+:\d\d:\d\d\.\d{3} -->.+line.+\n.+/g)) {
   $done({});
   return;
 }
 
-// 固定设置
-const sl = "auto";       // 源语言
-const tl = "zh-CN";      // 目标语言（简体中文）
-const line = "s";        // 英文在上，中文在下
+// 配置翻译行为：英文在上，中文字幕在下
+const sl = "auto";
+const tl = "zh-CN";
+const lineOrder = "s"; // "s" 英文在上，"f" 中文在上
 
 translate();
 
@@ -37,7 +43,9 @@ async function translate() {
 
   let sents = [];
   for (let i in dialogue) {
-    const text = dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n/, "");
+    const text = dialogue[i]
+      .replace(/<\/*(c\.[^>]+|i|c)>/g, "")
+      .replace(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n/, "");
     sents.push(`~${i}~${text}`);
   }
 
@@ -45,7 +53,7 @@ async function translate() {
   let result = [];
 
   for (let group of grouped) {
-    const res = await googleTranslate(group.join("\n"));
+    const res = await translateGoogle(group.join("\n"));
     if (res.sentences) {
       for (let s of res.sentences) {
         if (s.trans) {
@@ -68,14 +76,17 @@ async function translate() {
     const match = new RegExp(`~${j}~\\s*(.+)`);
     const lineTrans = translations.find(x => x.match(match));
     if (lineTrans) {
-      body = body.replace(patt, `$1\n${lineTrans.match(match)[1]}`);
+      const cn = lineTrans.match(match)[1];
+      const en = dialogue[j].replace(/.+\n/, "").trim();
+      const full = lineOrder === "f" ? `${cn}\n${timeline[j]}\n${en}` : `${en}\n${timeline[j]}\n${cn}`;
+      body = body.replace(patt, full);
     }
   }
 
   $done({ body });
 }
 
-function googleTranslate(query) {
+function translateGoogle(query) {
   return $task.fetch({
     url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${sl}&tl=${tl}`,
     method: "POST",
