@@ -1,72 +1,73 @@
-let url = typeof $request !== "undefined" ? $request.url : "";
 let rawBody = $response.body;
-let body = "";
+let body;
 
 try {
-  if (typeof rawBody === "string") {
-    body = rawBody;
-  } else if (typeof TextDecoder !== "undefined") {
-    body = new TextDecoder("utf-8").decode(rawBody);
-  } else {
-    console.log("TextDecoder 不可用");
-    $done({});
-  }
+  body = typeof rawBody === "string"
+    ? rawBody
+    : new TextDecoder("utf-8").decode(rawBody);
 } catch (e) {
-  console.log("解码失败：" + e);
+  console.log("解码失败");
   $done({});
   return;
 }
 
-if (!body || !body.includes(" --> ")) {
+// 匹配 Netflix 字幕格式
+if (!body || !body.match(/\d+:\d\d:\d\d\.\d{3} -->.+line.+\n.+/g)) {
   $done({});
   return;
 }
 
-let setting = {
-  type: "Google",
-  sl: "auto",
-  tl: "zh-CN",
-  line: "s" // 英上中下
-};
+// 固定设置
+const sl = "auto";       // 源语言
+const tl = "zh-CN";      // 目标语言（简体中文）
+const line = "s";        // 英文在上，中文在下
 
 translate();
 
 async function translate() {
-  body = body.replace(/\r/g, "");
-  body = body.replace(/(\d+:\d\d:\d\d\.\d{3} --> .+\n.+)\n(.+)/g, "$1 $2");
+  body = body.replace(/\r/g, "").replace(/(\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+)\n(.+)/g, "$1 $2");
 
-  const timeline = body.match(/\d+:\d\d:\d\d\.\d{3} --> .+/g);
-  const dialogue = body.match(/\d+:\d\d:\d\d\.\d{3} --> .+\n.+/g);
+  const dialogue = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+/g);
+  const timeline = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+/g);
+
   if (!dialogue || !timeline) {
     $done({});
     return;
   }
 
-  let s_sentences = dialogue.map((line, i) => `~${i}~${line.replace(/\d+:\d\d:\d\d\.\d{3} --> .+\n/, "")}`);
-  s_sentences = group(s_sentences, 80);
+  let sents = [];
+  for (let i in dialogue) {
+    const text = dialogue[i].replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n/, "");
+    sents.push(`~${i}~${text}`);
+  }
 
-  let t_sentences = [];
-  for (const group of s_sentences) {
-    let res = await googleTranslate(group.join("\n"));
+  const grouped = group(sents, 80);
+  let result = [];
+
+  for (let group of grouped) {
+    const res = await googleTranslate(group.join("\n"));
     if (res.sentences) {
-      res.sentences.forEach((s) => {
-        if (s.trans) t_sentences.push(s.trans.replace(/〜|～/g, "~"));
-      });
+      for (let s of res.sentences) {
+        if (s.trans) {
+          result.push(s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"));
+        }
+      }
     }
   }
 
-  const translated = t_sentences.join(" ").match(/~\d+~[^~]+/g);
-  if (!translated) {
+  const translations = result.join(" ").match(/~\d+~[^~]+/g);
+  if (!translations) {
     $done({});
     return;
   }
 
   for (let j in dialogue) {
-    let t_line = translated.find((x) => x.startsWith(`~${j}~`));
-    if (!t_line) continue;
-    let chinese = t_line.replace(`~${j}~`, "").trim();
-    let patt = new RegExp(`(${timeline[j]}(\\n.+)+)`);
-    body = body.replace(patt, `$1\n${chinese}`);
+    const patt = new RegExp(`(${timeline[j]}(\\n.+)+)`);
+    const match = new RegExp(`~${j}~\\s*(.+)`);
+    const lineTrans = translations.find(x => x.match(match));
+    if (lineTrans) {
+      body = body.replace(patt, `$1\n${lineTrans.match(match)[1]}`);
+    }
   }
 
   $done({ body });
@@ -74,21 +75,23 @@ async function translate() {
 
 function googleTranslate(query) {
   return $task.fetch({
-    url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}`,
+    url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${sl}&tl=${tl}`,
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "User-Agent": "Mozilla/5.0" },
     body: `q=${encodeURIComponent(query)}`
-  }).then(resp => {
+  }).then(res => {
     try {
-      return JSON.parse(resp.body);
-    } catch {
+      return JSON.parse(res.body);
+    } catch (e) {
       return {};
     }
   });
 }
 
 function group(arr, size) {
-  const result = [];
-  for (let i = 0; i < arr.length; i += size) result.push(arr.slice(i, i + size));
+  let result = [];
+  for (let i = 0; i < arr.length; i += size) {
+    result.push(arr.slice(i, i + size));
+  }
   return result;
 }
