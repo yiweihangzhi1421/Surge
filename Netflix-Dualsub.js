@@ -2,22 +2,31 @@ let url = $request.url;
 let raw = $response.body;
 let body;
 
+// ✅ 自动兼容 Loon 中 base64 编码或纯文本情况
 try {
-  // ✅ 兼容 Loon，无需 Buffer
-  body = typeof raw === "string" ? atob(raw) : raw;
+  if (typeof raw === "string") {
+    // 判断是否为 base64 编码格式（含大量 A-Z0-9+/）
+    if (/^[A-Za-z0-9+/=\s]+$/.test(raw.slice(0, 200))) {
+      body = atob(raw);
+    } else {
+      body = raw; // 直接处理纯文本
+    }
+  } else {
+    body = raw;
+  }
 } catch (e) {
-  console.log("[Error] 解码失败：" + e);
+  console.log("[解码失败] 跳过该请求", e);
   $done({});
 }
 
 let setting = {
   sl: "auto",
   tl: "zh-CN",
-  line: "f" // f=中文在上，英文在下；s=相反
+  line: "f" // f = 中文在上，英文在下；s = 英文在上，中文在下
 };
 
 if (!body || !body.match(/\d+:\d\d:\d\d\.\d+ -->.+\n.+/g)) $done({});
-if (url.match(/\.m3u8/)) $done({});
+if (url.includes(".m3u8")) $done({});
 
 (async () => {
   body = body.replace(/\r/g, "");
@@ -66,6 +75,7 @@ if (url.match(/\.m3u8/)) $done({});
     let patt2 = new RegExp(`~${j}~\\s*(.+)`);
     let match = g_t_sentences.match(patt2);
     if (match) {
+      // 中文在上，英文在下
       body = body.replace(patt, `${match[1]}\n$1`);
     }
   }
