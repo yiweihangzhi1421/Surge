@@ -1,11 +1,12 @@
 let headers = $request.headers;
 let url = $request.url;
 
+// Base64 解码响应体，解决 UTF-8 解码失败
 let body;
 try {
   body = Buffer.from($response.body, "base64").toString("utf-8");
 } catch (e) {
-  console.log("[Error] Base64 解码失败，字幕无法处理");
+  console.log("[Error] Base64 解码失败");
   $done({});
 }
 
@@ -15,7 +16,7 @@ let settings = {
     lang: "English",
     sl: "auto",
     tl: "zh-CN",
-    line: "f", // 👈 中文在上方，英文在下方
+    line: "f", // 👈 中文在上，英文在下
     dkey: "null"
   }
 };
@@ -81,12 +82,11 @@ async function machine_subtitles(type) {
     for (let j in dialogue) {
       let patt = new RegExp(`(${timeline[j]})`);
       if (setting.line === "s") {
-        patt = new RegExp(dialogue[j].replace(/[[\]()?]/g, '\\$&'));
+        patt = new RegExp(dialogue[j].replace(/[[\]()?]/g, '\\$&')); // ✅ 安全正则替换
       }
 
       let patt2 = new RegExp(`~${j}~\\s*(.+)`);
       if (g_t_sentences.match(patt2)) {
-        // 中文在上，英文在下
         body = body.replace(patt, `${g_t_sentences.match(patt2)[1]}\n$1`);
       }
     }
