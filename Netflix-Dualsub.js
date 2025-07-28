@@ -3,34 +3,34 @@ let rawBody = $response.body;
 let body;
 
 try {
-  body = typeof rawBody === "string" ? rawBody : new TextDecoder("utf-8").decode(rawBody);
+  if (typeof rawBody === "string") {
+    body = rawBody;
+  } else if (typeof TextDecoder !== "undefined") {
+    body = new TextDecoder("utf-8").decode(rawBody);
+  } else {
+    console.log("TextDecoder 不可用，跳过");
+    $done({});
+  }
 } catch (e) {
-  console.log("[跳过] 无法解码为 UTF-8 字符串");
+  console.log("解码失败，跳过");
   $done({});
   return;
 }
 
-let settings = {
-  Netflix: {
-    type: "Google",
-    sl: "auto",
-    tl: "zh-CN",
-    line: "f" // 中文在上，英文在下
-  }
+// Netflix VTT 字幕格式检查
+if (!body || !body.match(/\d+:\d\d:\d\d\.\d{3} -->.+line.+\n.+/g)) $done({});
+
+// 固定配置
+let setting = {
+  type: "Google",
+  sl: "auto",
+  tl: "zh-CN",
+  line: "s" // 英文在上，中文在下
 };
 
-let service = "Netflix";
-let setting = settings[service];
+translate();
 
-if (!body || !body.match(/\d+:\d\d:\d\d\.\d{3} -->.+line.+\n.+/g)) $done({});
-if (setting.type === "Disable") $done({});
-if (setting.type !== "Official" && url.match(/\.m3u8/)) $done({});
-
-if (url.match(/\.(web)?vtt/) || service === "Netflix") {
-  machine_subtitles();
-}
-
-async function machine_subtitles() {
+async function translate() {
   body = body.replace(/\r/g, "");
   body = body.replace(/(\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+)\n(.+)/g, "$1 $2");
 
@@ -47,22 +47,14 @@ async function machine_subtitles() {
     s_sentences.push("~" + i + "~" + clean);
   }
 
-  s_sentences = groupAgain(s_sentences, 80);
+  s_sentences = group(s_sentences, 80);
 
-  let t_sentences = [];
   let trans_result = [];
-
-  for (let p in s_sentences) {
-    let options = {
-      url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}`,
-      method: "POST",
-      headers: { "User-Agent": "Mozilla/5.0" },
-      body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
-    };
-
-    let trans = await send_request(options);
-    if (trans.sentences) {
-      for (let s of trans.sentences) {
+  for (let group of s_sentences) {
+    let query = group.join("\n");
+    let res = await translateGoogle(query);
+    if (res.sentences) {
+      for (let s of res.sentences) {
         if (s.trans) {
           trans_result.push(
             s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~")
@@ -72,34 +64,34 @@ async function machine_subtitles() {
     }
   }
 
-  if (trans_result.length > 0) {
-    t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
-  }
+  let t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
+  if (!t_sentences || !t_sentences.length) $done({});
 
-  if (t_sentences.length > 0) {
-    let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n");
+  let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n");
 
-    for (let j in dialogue) {
-      let patt = new RegExp(`(${timeline[j]})`);
-      if (setting.line === "s") {
-        patt = new RegExp(dialogue[j].replace(/[[\]()?]/g, "\\$&"));
-      }
-
-      let patt2 = new RegExp(`~${j}~\\s*(.+)`);
-      if (g_t_sentences.match(patt2)) {
-        body = body.replace(patt, `${g_t_sentences.match(patt2)[1]}\n$1`);
-      }
+  for (let j in dialogue) {
+    let patt = new RegExp(`(${timeline[j]}(\\n.+)+)`);
+    let patt2 = new RegExp(`~${j}~\\s*(.+)`);
+    if (g_t_sentences.match(patt2)) {
+      body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`);
     }
   }
 
   $done({ body });
 }
 
-function send_request(options) {
+function translateGoogle(query) {
+  let options = {
+    url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${setting.sl}&tl=${setting.tl}`,
+    method: "POST",
+    headers: { "User-Agent": "Mozilla/5.0" },
+    body: `q=${encodeURIComponent(query)}`
+  };
+
   return new Promise((resolve) => {
-    $task.fetch(options).then((response) => {
+    $task.fetch(options).then((resp) => {
       try {
-        resolve(options.method === "GET" ? response.body : JSON.parse(response.body));
+        resolve(JSON.parse(resp.body));
       } catch (e) {
         resolve({});
       }
@@ -107,10 +99,10 @@ function send_request(options) {
   });
 }
 
-function groupAgain(data, num) {
+function group(arr, size) {
   let result = [];
-  for (let i = 0; i < data.length; i += num) {
-    result.push(data.slice(i, i + num));
+  for (let i = 0; i < arr.length; i += size) {
+    result.push(arr.slice(i, i + size));
   }
   return result;
 }
