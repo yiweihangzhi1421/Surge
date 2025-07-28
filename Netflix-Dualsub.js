@@ -49,7 +49,9 @@ async function translate() {
     if (res.sentences) {
       for (let s of res.sentences) {
         if (s.trans) {
-          result.push(s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"));
+          result.push(
+            s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~")
+          );
         }
       }
     }
