@@ -1,36 +1,27 @@
-let headers = $request.headers;
 let url = $request.url;
-
-// === ✅ 解码响应体，支持 Loon / Surge / QX ===
-let raw = $response.body;
+let rawBody = $response.body;
 let body;
 
 try {
-  if (typeof raw === "string") {
-    body = raw;
-  } else {
-    body = Buffer.from(raw).toString("utf-8");
-  }
+  body = typeof rawBody === "string" ? rawBody : new TextDecoder("utf-8").decode(rawBody);
 } catch (e) {
-  console.log("[解码失败] 跳过该请求");
+  console.log("[跳过] 无法解码为 UTF-8 字符串");
   $done({});
   return;
 }
 
-// === ✅ 固定设置：Google 翻译，中文字幕在上方 ===
 let settings = {
   Netflix: {
     type: "Google",
     sl: "auto",
     tl: "zh-CN",
-    line: "f" // 中文在上，英文在下；如改"s"则相反
+    line: "f" // 中文在上，英文在下
   }
 };
 
 let service = "Netflix";
 let setting = settings[service];
 
-// === ✅ 拦截非字幕内容直接跳过 ===
 if (!body || !body.match(/\d+:\d\d:\d\d\.\d{3} -->.+line.+\n.+/g)) $done({});
 if (setting.type === "Disable") $done({});
 if (setting.type !== "Official" && url.match(/\.m3u8/)) $done({});
@@ -74,10 +65,7 @@ async function machine_subtitles() {
       for (let s of trans.sentences) {
         if (s.trans) {
           trans_result.push(
-            s.trans
-              .replace(/\n$/g, "")
-              .replace(/\n/g, " ")
-              .replace(/〜|～/g, "~")
+            s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~")
           );
         }
       }
@@ -99,7 +87,6 @@ async function machine_subtitles() {
 
       let patt2 = new RegExp(`~${j}~\\s*(.+)`);
       if (g_t_sentences.match(patt2)) {
-        // 中文在上，英文在下
         body = body.replace(patt, `${g_t_sentences.match(patt2)[1]}\n$1`);
       }
     }
