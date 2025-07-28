@@ -3,25 +3,19 @@ let raw = $response.body;
 let body;
 
 try {
-  // Loon 下 $response.body 是 base64 编码字符串
-  if (typeof raw === "string") {
-    body = Buffer.from(raw, "base64").toString("utf-8");
-  } else {
-    body = raw;
-  }
+  // ✅ 兼容 Loon，无需 Buffer
+  body = typeof raw === "string" ? atob(raw) : raw;
 } catch (e) {
   console.log("[Error] 解码失败：" + e);
   $done({});
 }
 
-// 固定设置：Google 翻译 + 中文在上
 let setting = {
   sl: "auto",
   tl: "zh-CN",
-  line: "f"
+  line: "f" // f=中文在上，英文在下；s=相反
 };
 
-// 跳过非字幕资源
 if (!body || !body.match(/\d+:\d\d:\d\d\.\d+ -->.+\n.+/g)) $done({});
 if (url.match(/\.m3u8/)) $done({});
 
@@ -37,7 +31,7 @@ if (url.match(/\.m3u8/)) $done({});
 
   for (let i in dialogue) {
     let clean = dialogue[i]
-      .replace(/<[^>]+>/g, "") // 清除 HTML 标签
+      .replace(/<[^>]+>/g, "")
       .replace(/\d+:\d\d:\d\d\.\d+ --> \d+:\d\d:\d\d\.\d+\n/, "");
     s_sentences.push("~" + i + "~" + clean);
   }
