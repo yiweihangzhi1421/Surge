@@ -1,23 +1,28 @@
 let headers = $request.headers;
 let url = $request.url;
 
-// Base64 解码响应体，解决 UTF-8 解码失败
+// === ✅ 解码响应体，支持 Loon/Surge/QX ===
+let raw = $response.body;
 let body;
+
 try {
-  body = Buffer.from($response.body, "base64").toString("utf-8");
+  if (typeof raw === "string") {
+    body = raw;
+  } else {
+    body = Buffer.from(raw).toString("utf-8");
+  }
 } catch (e) {
-  console.log("[Error] Base64 解码失败");
+  console.log("[Error] 解码失败：" + e);
   $done({});
 }
 
+// === ✅ 固定设置（无需 Shortcuts） ===
 let settings = {
   Netflix: {
     type: "Google",
-    lang: "English",
     sl: "auto",
     tl: "zh-CN",
-    line: "f", // 👈 中文在上，英文在下
-    dkey: "null"
+    line: "f", // f=中文在上，英文在下；s=反过来
   }
 };
 
@@ -29,10 +34,10 @@ if (setting.type === "Disable") $done({});
 if (setting.type !== "Official" && url.match(/\.m3u8/)) $done({});
 
 if (url.match(/\.(web)?vtt/) || service === "Netflix") {
-  machine_subtitles("Google");
+  machine_subtitles();
 }
 
-async function machine_subtitles(type) {
+async function machine_subtitles() {
   body = body.replace(/\r/g, "");
   body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
 
@@ -82,11 +87,12 @@ async function machine_subtitles(type) {
     for (let j in dialogue) {
       let patt = new RegExp(`(${timeline[j]})`);
       if (setting.line === "s") {
-        patt = new RegExp(dialogue[j].replace(/[[\]()?]/g, '\\$&')); // ✅ 安全正则替换
+        patt = new RegExp(dialogue[j].replace(/[[\]()?]/g, '\\$&'));
       }
 
       let patt2 = new RegExp(`~${j}~\\s*(.+)`);
       if (g_t_sentences.match(patt2)) {
+        // 中文在上，英文在下
         body = body.replace(patt, `${g_t_sentences.match(patt2)[1]}\n$1`);
       }
     }
