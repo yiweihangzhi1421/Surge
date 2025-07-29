@@ -43,7 +43,7 @@ let default_settings = {
         lang: "English",
         sl: "auto",
         tl: "zh-CN",
-        line: "s",
+        line: "f",
         dkey: "null",
         s_subtitles_url: "null",
         t_subtitles_url: "null",
