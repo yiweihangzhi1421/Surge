@@ -1,37 +1,28 @@
-let headers = $request.headers
-let url = $request.url
-
 let settings = {
   Netflix: {
     type: "Google",
-    lang: "English",
-    sl: "auto",
     tl: "zh-CN",
-    line: "f", // f: 英文在上，中文在下；s: 中文在上，英文在下
-    dkey: "null"
+    line: "f" // 英文在上，中文在下；"s" 表示中文在上
   }
 }
 
 let body = $response.body
-if (!body || !body.match(/\d+:\d\d:\d\d.\d\d\d -->.+line.+\n.+/g)) $done({ body })
-if (settings.Netflix.type !== "Google") $done({ body })
+if (!body || !body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}/g)) $done({ body })
 
 body = body.replace(/\r/g, "")
-body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+body = body.replace(/(\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+)\n(.+)/g, "$1 $2")
 
-let dialogue = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+/g)
+let dialogue = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+/g)
+let timeline = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+/g)
 if (!dialogue) $done({ body })
-
-let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g)
 
 let s_sentences = []
 for (let i in dialogue) {
   let clean = dialogue[i]
     .replace(/<\/*(c\.[^>]+|i|c)>/g, "")
-    .replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "")
+    .replace(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n/, "")
   s_sentences.push("~" + i + "~" + clean)
 }
-
 s_sentences = groupAgain(s_sentences, 80)
 
 let t_sentences = []
@@ -46,21 +37,26 @@ function groupAgain(data, num) {
 }
 
 async function main() {
-  for (let p in s_sentences) {
-    let postBody = `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
+  for (let group of s_sentences) {
+    let query = group.join("\n")
     let options = {
-      url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&sl=${settings.Netflix.sl}&tl=${settings.Netflix.tl}`,
+      url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&dj=1&sl=auto&tl=${settings.Netflix.tl}`,
       headers: { "User-Agent": "Mozilla/5.0", "Content-Type": "application/x-www-form-urlencoded" },
-      body: postBody
+      body: `q=${encodeURIComponent(query)}`
     }
 
     await new Promise((resolve) => {
       $httpClient.post(options, (err, resp, data) => {
         if (err) return resolve()
         try {
-          let trans = JSON.parse(data)
-          if (trans.sentences) {
-            for (let s of trans.sentences) {
+          const json = JSON.parse(data)
+          const detectedLang = json.src
+          if (detectedLang !== "en") {
+            // 非英文字幕，不翻译
+            return resolve()
+          }
+          if (json.sentences) {
+            for (let s of json.sentences) {
               if (s.trans) {
                 trans_result.push(s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"))
               }
@@ -81,7 +77,7 @@ async function main() {
     for (let j in dialogue) {
       let patt = new RegExp(`(${timeline[j]})`)
       if (settings.Netflix.line === "s") {
-        patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`)
+        patt = new RegExp(`(${dialogue[j].replace(/($begin:math:display$|$end:math:display$|$begin:math:text$|$end:math:text$|\?)/g, "\\$1")})`)
       }
 
       let patt2 = new RegExp(`~${j}~\\s*(.+)`)
