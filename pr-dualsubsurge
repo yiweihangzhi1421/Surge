@@ -2,23 +2,21 @@ let setting = {
   type: "Google",
   sl: "auto",
   tl: "zh-CN",
-  line: "s" // 中文在上
+  line: "s" // s: 中文在上, f: 英文在上
 };
 
 let body = $response.body;
 if (!body) $done({});
 
 body = body.replace(/\r/g, "");
-body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
-body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
+body = body.replace(/(\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+\n.+)\n(.+)/g, "$1 $2");
 
-let dialogue = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+/g);
+let dialogue = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+\n.+/g);
 if (!dialogue) $done({});
-
-let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g);
+let timeline = body.match(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+/g);
 
 let s_sentences = dialogue.map((d, i) =>
-  `~${i}~${d.replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "")}`
+  `~${i}~${d.replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d\.\d\d\d --> \d+:\d\d:\d\d\.\d.+\n/, "")}`
 );
 
 function group(data, num) {
@@ -36,7 +34,7 @@ let grouped = group(s_sentences, 80);
 
   for (let chunk of grouped) {
     let options = {
-      url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
+      url: `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
       headers: {
         "User-Agent": "GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)",
         "Content-Type": "application/x-www-form-urlencoded"
@@ -53,7 +51,9 @@ let grouped = group(s_sentences, 80);
 
     if (res.sentences) {
       for (let s of res.sentences) {
-        if (s.trans) trans_result.push(s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"));
+        if (s.trans) trans_result.push(
+          s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~")
+        );
       }
     }
   }
@@ -68,8 +68,11 @@ let grouped = group(s_sentences, 80);
     let trans = t_sentences.find(t => t.startsWith(`~${index}~`));
     if (!trans) continue;
     let line = trans.replace(/^~\d+~/, "").trim();
-    let patt = new RegExp(`(${setting.line === "s" ? dialogue[j].replace(/([.*+?^=!:${}()|\[\]\/\\])/g, "\\$1") : timeline[j]})`);
-    body = body.replace(patt, `$1\n${line}`);
+    if (setting.line === "s") {
+      body = body.replace(dialogue[index], `${line}\n${dialogue[index]}`);
+    } else {
+      body = body.replace(dialogue[index], `${dialogue[index]}\n${line}`);
+    }
   }
 
   $done({ body });
