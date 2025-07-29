@@ -1,14 +1,13 @@
-let settings = {
-  tl: "zh-CN", // 翻译成简体中文
-  line: "f",   // "f" 英文在上，"s" 中文在上
-};
+const tl = "zh-CN";       // 翻译目标语言（简体中文）
+const lineOrder = "f";    // "f": 英文在上，"s": 中文在上
 
 let body = $response.body;
 
+// 非字幕内容直接跳过
 if (
   !body ||
   !body.includes("-->") ||
-  !body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}/g)
+  !body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}/)
 ) {
   $done({ body });
 }
@@ -21,12 +20,21 @@ let timeline = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+/g);
 if (!dialogue) $done({ body });
 
 let s_sentences = [];
+let idList = [];
+
 for (let i in dialogue) {
   let clean = dialogue[i]
     .replace(/<\/*(c\.[^>]+|i|c)>/g, "")
     .replace(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n/, "");
+
+  // 跳过已有中文的字幕
+  if (/[\u4e00-\u9fa5]/.test(clean)) continue;
+
   s_sentences.push("~" + i + "~" + clean);
+  idList.push(i);
 }
+
+if (s_sentences.length === 0) $done({ body });
 
 s_sentences = groupAgain(s_sentences, 80);
 
@@ -45,7 +53,7 @@ async function main() {
   for (let group of s_sentences) {
     let query = group.join("\n");
     let options = {
-      url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&dj=1&sl=auto&tl=${settings.tl}`,
+      url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&dj=1&sl=auto&tl=${tl}`,
       headers: {
         "User-Agent": "Mozilla/5.0",
         "Content-Type": "application/x-www-form-urlencoded"
@@ -59,7 +67,8 @@ async function main() {
         try {
           const json = JSON.parse(data);
           const detectedLang = json.src;
-          if (detectedLang !== "en") return resolve(); // 跳过非英文字幕
+          if (detectedLang !== "en") return resolve(); // 跳过非英文
+
           if (json.sentences) {
             for (let s of json.sentences) {
               if (s.trans) {
@@ -84,12 +93,10 @@ async function main() {
 
   if (t_sentences && t_sentences.length > 0) {
     let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n");
-    for (let j in dialogue) {
+    for (let j of idList) {
       let patt = new RegExp(`(${timeline[j]})`);
-      if (settings.line === "s") {
-        patt = new RegExp(
-          `(${dialogue[j].replace(/([()[\]?])/g, "\\$1")})`
-        );
+      if (lineOrder === "s") {
+        patt = new RegExp(`(${dialogue[j].replace(/([()[\]?])/g, "\\$1")})`);
       }
 
       let patt2 = new RegExp(`~${j}~\\s*(.+)`);
