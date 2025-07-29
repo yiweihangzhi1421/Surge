@@ -1,9 +1,9 @@
-const tl = "zh-CN";       // 翻译目标语言（简体中文）
+const tl = "zh-CN";       // 目标语言：简体中文
 const lineOrder = "f";    // "f": 英文在上，"s": 中文在上
 
 let body = $response.body;
 
-// 非字幕内容直接跳过
+// 不是字幕格式，立即跳过
 if (
   !body ||
   !body.includes("-->") ||
@@ -27,9 +27,7 @@ for (let i in dialogue) {
     .replace(/<\/*(c\.[^>]+|i|c)>/g, "")
     .replace(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n/, "");
 
-  // 跳过已有中文的字幕
-  if (/[\u4e00-\u9fa5]/.test(clean)) continue;
-
+  if (/[\u4e00-\u9fa5]/.test(clean)) continue; // 含中文，跳过
   s_sentences.push("~" + i + "~" + clean);
   idList.push(i);
 }
@@ -66,8 +64,7 @@ async function main() {
         if (err) return resolve();
         try {
           const json = JSON.parse(data);
-          const detectedLang = json.src;
-          if (detectedLang !== "en") return resolve(); // 跳过非英文
+          if (json.src !== "en") return resolve(); // 只翻译英文
 
           if (json.sentences) {
             for (let s of json.sentences) {
