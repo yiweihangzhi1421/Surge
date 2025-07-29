@@ -1,109 +1,69 @@
-const tl = "zh-CN";       // 目标语言：简体中文
-const lineOrder = "f";    // "f": 英文在上，"s": 中文在上
+let settings = {
+  tl: "zh-CN", // 目标语言：简体中文
+  line: "f"    // 英文在上（foreign first），可改为 "s" 中文在上
+};
 
 let body = $response.body;
 
-// 不是字幕格式，立即跳过
-if (
-  !body ||
-  !body.includes("-->") ||
-  !body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}/)
-) {
-  $done({ body });
+// 若无 body，直接结束
+if (!body || typeof body !== "string") {
+  $done({});
+  return;
 }
 
+// ✅ 判断是否为字幕文件（防止误处理视频流）
+if (!body.startsWith("WEBVTT")) {
+  $done({});
+  return;
+}
+
+// 替换回车符以统一处理
 body = body.replace(/\r/g, "");
-body = body.replace(/(\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+)\n(.+)/g, "$1 $2");
 
-let dialogue = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n.+/g);
-let timeline = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+/g);
-if (!dialogue) $done({ body });
+// ✅ 提取字幕行
+let lines = body.split("\n");
+let output = [];
+let block = [];
 
-let s_sentences = [];
-let idList = [];
+const isTextLine = line => line && !/^\d+$/.test(line) && !/^(\d{2}:){2}\d{2}\.\d{3}/.test(line) && !/^NOTE/.test(line);
 
-for (let i in dialogue) {
-  let clean = dialogue[i]
-    .replace(/<\/*(c\.[^>]+|i|c)>/g, "")
-    .replace(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}.+\n/, "");
-
-  if (/[\u4e00-\u9fa5]/.test(clean)) continue; // 含中文，跳过
-  s_sentences.push("~" + i + "~" + clean);
-  idList.push(i);
+async function translate(text) {
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${settings.tl}&dt=t&q=${encodeURIComponent(text)}`;
+  const response = await fetch(url);
+  const data = await response.json();
+  return data[0].map(item => item[0]).join("");
 }
 
-if (s_sentences.length === 0) $done({ body });
+// ✅ 主处理逻辑
+(async () => {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
 
-s_sentences = groupAgain(s_sentences, 80);
+    // 分段处理
+    if (line.trim() === "") {
+      if (block.length > 0) {
+        const outputBlock = [...block];
 
-let t_sentences = [];
-let trans_result = [];
-
-function groupAgain(data, num) {
-  let result = [];
-  for (let i = 0; i < data.length; i += num) {
-    result.push(data.slice(i, i + num));
-  }
-  return result;
-}
-
-async function main() {
-  for (let group of s_sentences) {
-    let query = group.join("\n");
-    let options = {
-      url: `https://translate.google.com/translate_a/single?client=gtx&dt=t&dj=1&sl=auto&tl=${tl}`,
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: `q=${encodeURIComponent(query)}`
-    };
-
-    await new Promise((resolve) => {
-      $httpClient.post(options, (err, resp, data) => {
-        if (err) return resolve();
-        try {
-          const json = JSON.parse(data);
-          if (json.src !== "en") return resolve(); // 只翻译英文
-
-          if (json.sentences) {
-            for (let s of json.sentences) {
-              if (s.trans) {
-                trans_result.push(
-                  s.trans
-                    .replace(/\n$/g, "")
-                    .replace(/\n/g, " ")
-                    .replace(/〜|～/g, "~")
-                );
-              }
-            }
+        // 处理字幕文本部分
+        const textLines = block.filter(isTextLine);
+        for (let text of textLines) {
+          const translated = await translate(text);
+          if (settings.line === "f") {
+            outputBlock.push(text);       // 原文在上
+            outputBlock.push(translated); // 译文在下
+          } else {
+            outputBlock.push(translated); // 译文在上
+            outputBlock.push(text);       // 原文在下
           }
-        } catch (e) {}
-        resolve();
-      });
-    });
-  }
+        }
 
-  if (trans_result.length > 0) {
-    t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
-  }
-
-  if (t_sentences && t_sentences.length > 0) {
-    let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n");
-    for (let j of idList) {
-      let patt = new RegExp(`(${timeline[j]})`);
-      if (lineOrder === "s") {
-        patt = new RegExp(`(${dialogue[j].replace(/([()[\]?])/g, "\\$1")})`);
+        output.push(...outputBlock, "");
+        block = [];
       }
-
-      let patt2 = new RegExp(`~${j}~\\s*(.+)`);
-      if (g_t_sentences.match(patt2)) {
-        body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`);
-      }
+    } else {
+      block.push(line);
     }
   }
 
-  $done({ body });
-}
-
-main();
+  $done({ body: output.join("\n") });
+})();
