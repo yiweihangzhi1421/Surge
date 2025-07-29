@@ -7,7 +7,7 @@ let settings = {
     lang: "English",
     sl: "auto",
     tl: "zh-CN",
-    line: "s",
+    line: "f",
     dkey: "null"
   }
 }
