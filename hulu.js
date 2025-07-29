@@ -88,7 +88,7 @@ let default_settings = {
         lang: "English",
         sl: "auto",
         tl: "zh-CN",
-        line: "f", // f, s
+        line: "s", // f, s
         dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
