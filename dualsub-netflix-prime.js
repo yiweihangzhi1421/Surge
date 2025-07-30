@@ -1,101 +1,102 @@
-// Prime Video Dualsub for Loon / Surge
-// Google翻译 + 英文在上，中文在下 + 支持分段 VTT 字幕 + 日志输出
-
-const setting = {
+let setting = {
   type: "Google",
   sl: "auto",
   tl: "zh-CN",
-  line: "f" // 英文在上，中文在下
+  line: "f" // "f" 表示英文在上，中文在下
 };
 
 let body = $response.body;
-
 if (!body) {
-  console.log("[Dualsub] ❌ 字幕内容为空");
-  return $done({});
+  console.log("🔴 无字幕内容，$response.body 为空");
+  $done({});
 }
 
-// 字幕清洗预处理
 body = body.replace(/\r/g, "");
-body = body.replace(/(\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}\n.+)\n(.+)/g, "$1 $2");
-body = body.replace(/(\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}\n.+)\n(.+)/g, "$1 $2");
+body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
+body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2");
 
-const dialogue = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}\n.+/g);
+let dialogue = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+/g);
 if (!dialogue) {
-  console.log("[Dualsub] ❌ 无法提取有效字幕");
-  return $done({});
+  console.log("🔴 无匹配字幕行，可能字幕格式异常");
+  $done({});
 }
 
-const timeline = body.match(/\d+:\d\d:\d\d\.\d{3} --> \d+:\d\d:\d\d\.\d{3}/g);
-if (!timeline) {
-  console.log("[Dualsub] ❌ 无法提取时间轴");
-  return $done({});
-}
+let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g);
 
-console.log(`[Dualsub] ✅ VTT 被抓取成功，共识别 ${dialogue.length} 条字幕`);
+let s_sentences = dialogue.map((d, i) =>
+  `~${i}~${d.replace(/<\/*(c\.[^>]+|i|c)>/g, "").replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "")}`
+);
 
-const s_sentences = dialogue.map((line, idx) => `~${idx}~${line.replace(/<[^>]+>/g, "").replace(/^.*\n/, "")}`);
-
-function group(list, size) {
-  let out = [];
-  for (let i = 0; i < list.length; i += size) {
-    out.push(list.slice(i, i + size));
+function group(data, num) {
+  let result = [];
+  for (let i = 0; i < data.length; i += num) {
+    result.push(data.slice(i, i + num));
   }
-  return out;
+  return result;
 }
 
-const grouped = group(s_sentences, 80);
+let grouped = group(s_sentences, 80);
 
 (async () => {
   let trans_result = [];
 
-  for (const chunk of grouped) {
-    const options = {
+  for (let chunk of grouped) {
+    let options = {
       url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
       headers: {
-        "User-Agent": "GoogleTranslate/6.29.0 (iPhone; iOS 15.4)"
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/x-www-form-urlencoded"
       },
       body: `q=${encodeURIComponent(chunk.join("\n"))}`
     };
 
     try {
-      const res = await request(options);
+      let res = await request(options);
+      console.log("🟢 Google 翻译状态码:", res?.status || "未知");
       if (res.sentences) {
-        for (const s of res.sentences) {
+        for (let s of res.sentences) {
           if (s.trans) {
-            const clean = s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~");
-            trans_result.push(clean);
+            trans_result.push(
+              s.trans
+                .replace(/\n$/g, "")
+                .replace(/\n/g, " ")
+                .replace(/〜|～/g, "~")
+            );
           }
         }
       }
-    } catch (e) {
-      console.log("[Dualsub] ❌ 翻译失败：" + e);
+    } catch (err) {
+      console.log("🔴 Google 翻译失败:", err);
       return $done({ body });
     }
   }
 
   if (trans_result.length === 0) {
-    console.log("[Dualsub] ⚠️ 翻译返回空结果，跳过");
+    console.log("🟡 翻译结果为空，返回原始字幕");
     return $done({ body });
   }
 
-  const t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
+  let t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
   if (!t_sentences) {
-    console.log("[Dualsub] ⚠️ 翻译标记匹配失败");
+    console.log("🟡 翻译匹配失败（~编号~ 没有命中）");
     return $done({ body });
   }
 
-  for (let i in dialogue) {
-    const trans = t_sentences.find(t => t.startsWith(`~${i}~`));
+  for (let j in dialogue) {
+    let index = parseInt(j);
+    let trans = t_sentences.find(t => t.startsWith(`~${index}~`));
     if (!trans) continue;
-    const text = trans.replace(/^~\d+~/, "").trim();
-    const patt = setting.line === "s"
-      ? new RegExp(`(${dialogue[i].replace(/([.*+?^=!:${}()|$begin:math:display$$end:math:display$\/\\])/g, "\\$1")})`)
-      : new RegExp(`(${timeline[i]})`);
-    body = body.replace(patt, `$1\n${text}`);
+    let line = trans.replace(/^~\d+~/, "").trim();
+    let patt = new RegExp(`(${timeline[j]})`);
+    if (setting.line === "s") {
+      patt = new RegExp(
+        `(${dialogue[j].replace(/([.*+?^=!:${}()|[\]/\\])/g, "\\$1")})`
+      );
+    }
+    body = body.replace(patt, `$1\n${line}`);
   }
 
-  console.log("[Dualsub] ✅ 翻译注入完成");
+  console.log("✅ 注入翻译完成，输出字幕");
   $done({ body });
 })();
 
@@ -104,9 +105,12 @@ function request(opt) {
     $httpClient.post(opt, (err, resp, data) => {
       if (err) return reject(err);
       try {
-        resolve(JSON.parse(data));
+        let parsed = JSON.parse(data);
+        parsed.status = resp?.status;
+        resolve(parsed);
       } catch (e) {
-        reject("JSON 解析失败");
+        console.log("🔴 JSON 解析失败:", data);
+        reject("JSON parse error");
       }
     });
   });
