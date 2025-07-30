@@ -2,11 +2,10 @@ let setting = {
   type: "Google",
   sl: "auto",
   tl: "zh-CN",
-  line: "s" // 中文在上
+  line: "f" // f: 英文在上 中文在下
 };
 
 let body = $response.body;
-
 if (!body) $done({});
 
 body = body.replace(/\r/g, "");
@@ -44,18 +43,29 @@ let grouped = group(s_sentences, 80);
       body: `q=${encodeURIComponent(chunk.join("\n"))}`
     };
 
-    let res = await request(options);
-    if (res.sentences) {
-      for (let s of res.sentences) {
-        if (s.trans) trans_result.push(s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"));
+    try {
+      let res = await request(options);
+      if (res.sentences) {
+        for (let s of res.sentences) {
+          if (s.trans) trans_result.push(s.trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"));
+        }
       }
+    } catch (err) {
+      console.log("🔴 Google 翻译请求失败:", err);
+      return $done({ body });
     }
   }
 
-  if (trans_result.length === 0) return $done({ body });
+  if (trans_result.length === 0) {
+    console.log("🟡 无翻译结果，保留原始字幕");
+    return $done({ body });
+  }
 
   let t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g);
-  if (!t_sentences) return $done({ body });
+  if (!t_sentences) {
+    console.log("🟡 翻译匹配失败");
+    return $done({ body });
+  }
 
   for (let j in dialogue) {
     let index = parseInt(j);
