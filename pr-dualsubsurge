@@ -133,7 +133,7 @@ let default_settings = {
     },
     PrimeVideo: {
         type: "Google", // 翻译类型：Google
-        lang: "Chinese (Simplified)", // 显示语言（仅作描述）
+        lang: "Chinese (Simplified) / English", // 显示语言：中英文双语
         sl: "auto", // 源语言：自动检测
         tl: "zh-CN", // 目标语言：简体中文
         line: "s", // 翻译后的语言在上（即中文在上）
@@ -357,7 +357,7 @@ if (url.match(/\.(web)?vtt/) || service == "Netflix" || service == "General") {
 }
 
 function external_subtitles() {
-    let patt = new RegExp(`(\\d+\\n)*\\d+:\\d\\d:\\d\\d.\\d\\d\\d --> \\d+:\\d\\d:\\d\\d.\\d.+(\\n|.)+`)
+    let patt = new RegExp(`(\\d+\\n)*\\d+:\\d\\d:\\d\\d.\\d\\d\\d --> \\d+:\\d\\d:\\d\d.\\d.+(\\n|.)+`)
     if (!setting.external_subtitles.match(patt)) $done({})
     if (!body.match(patt)) $done({})
     let external = setting.external_subtitles.replace(/(\d+:\d\d:\d\d),(\d\d\d)/g, "$1.$2")
@@ -389,9 +389,9 @@ async function machine_subtitles(type) {
     if (type == "Google") {
         for (var p in s_sentences) {
             let options = {
-                url: `https://translate.google.com/translate_a/single?client=it&dt=qca&dt=t&dt=rmt&dt=bd&dt=rms&dt=sos&dt=md&dt=gt&dt=ld&dt=ss&dt=ex&otf=2&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
+                url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`, // Removed dt=qca, dt=rmt, dt=bd, dt=rms, dt=sos, dt=md, dt=gt, dt=ld, dt=ss, dt=ex, otf=2
                 headers: {
-                    "User-Agent": "GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)"
+                    "User-Agent": "GoogleTranslate/6.29.59279" // Simplified User-Agent
                 },
                 body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
             }
