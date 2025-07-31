@@ -132,11 +132,11 @@ let default_settings = {
         external_subtitles: "null"
     },
     PrimeVideo: {
-        type: "Google", // Using Google Translate
-        lang: "English", // Default displayed language is English (original)
-        sl: "en", // Source language for translation is English
-        tl: "zh-CN", // Target language for translation is Chinese (Simplified)
-        line: "s", // "s" means source (original) language first (on top)
+        type: "Google", // 翻译类型：Google
+        lang: "Chinese (Simplified)", // 显示语言（仅作描述）
+        sl: "auto", // 源语言：自动检测
+        tl: "zh-CN", // 目标语言：简体中文
+        line: "s", // 翻译后的语言在上（即中文在上）
         dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
@@ -228,7 +228,7 @@ if (url.match(/action=set/)) {
     if (new_setting.subtitles) settings[service].subtitles = new_setting.subtitles
     if (new_setting.subtitles_type) settings[service].subtitles_type = new_setting.subtitles_type
     if (new_setting.subtitles_sl) settings[service].subtitles_sl = new_setting.subtitles_sl
-    if (new_setting.subtitles_tl) settings[service].tl = new_setting.tl
+    if (new_setting.subtitles_tl) settings[service].subtitles_tl = new_setting.tl
     if (new_setting.subtitles_line) settings[service].subtitles_line = new_setting.subtitles_line
     if (new_setting.external_subtitles) settings[service].external_subtitles = new_setting.external_subtitles.replace(/\r/g, "")
     $persistentStore.write(JSON.stringify(settings))
@@ -389,4 +389,173 @@ async function machine_subtitles(type) {
     if (type == "Google") {
         for (var p in s_sentences) {
             let options = {
-                url: `
+                url: `https://translate.google.com/translate_a/single?client=it&dt=qca&dt=t&dt=rmt&dt=bd&dt=rms&dt=sos&dt=md&dt=gt&dt=ld&dt=ss&dt=ex&otf=2&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
+                headers: {
+                    "User-Agent": "GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)"
+                },
+                body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
+            }
+
+            let trans = await send_request(options, "post")
+
+            if (trans.sentences) {
+                let sentences = trans.sentences
+                for (var k in sentences) {
+                    if (sentences[k].trans) trans_result.push(sentences[k].trans.replace(/\n$/g, "").replace(/\n/g, " ").replace(/〜|～/g, "~"))
+                }
+            }
+        }
+
+        if (trans_result.length > 0) {
+            t_sentences = trans_result.join(" ").match(/~\d+~[^~]+/g)
+        }
+
+    }
+
+    if (type == "DeepL") {
+        for (var l in s_sentences) {
+            let options = {
+                url: "https://api-free.deepl.com/v2/translate",
+                body: `auth_key=${setting.dkey}${setting.sl == "auto" ? "" : `&source_lang=${setting.sl}`}&target_lang=${setting.tl}${s_sentences[l].join("")}`
+            }
+
+            let trans = await send_request(options, "post")
+
+            if (trans.translations) trans_result.push(trans.translations)
+        }
+
+        if (trans_result.length > 0) {
+            for (var o in trans_result) {
+                for (var u in trans_result[o]) {
+                    t_sentences.push(trans_result[o][u].text.replace(/\n/g, " "))
+                }
+            }
+        }
+    }
+
+    if (t_sentences.length > 0) {
+        let g_t_sentences = t_sentences.join("\n").replace(/\s\n/g, "\n")
+
+        for (var j in dialogue) {
+            let patt = new RegExp(`(${timeline[j]})`)
+            // 这里根据 line 设置调整替换模式
+            if (setting.line == "f") patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`) // 原始语言在前
+            if (setting.line == "s") patt = new RegExp(`(${timeline[j]}(\\n.+)+)`) // 翻译语言在前
+
+            let patt2 = new RegExp(`~${j}~\\s*(.+)`)
+
+            if (g_t_sentences.match(patt2) && type == "Google") {
+                if (setting.line == "s") { // 翻译语言在前 (中文在上)
+                    body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`)
+                } else { // 原始语言在前 (英文在上) - 这与你的要求相反，但保留逻辑
+                    body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`)
+                }
+            }
+
+
+            // 针对 DeepL 的处理
+            if (type == "DeepL") {
+                if (setting.line == "s") { // 翻译语言在前 (中文在上)
+                    body = body.replace(patt, `$1\n${t_sentences[j]}`)
+                } else { // 原始语言在前 (英文在上) - 这与你的要求相反，但保留逻辑
+                    body = body.replace(patt, `$1\n${t_sentences[j]}`)
+                }
+            }
+        }
+
+
+        if (service != "Netflix") {
+            settings[service].s_subtitles_url = url
+            settings[service].subtitles = body
+            settings[service].subtitles_type = setting.type
+            settings[service].subtitles_sl = setting.sl
+            settings[service].subtitles_tl = setting.tl
+            settings[service].subtitles_line = setting.line
+            $persistentStore.write(JSON.stringify(settings))
+        }
+    }
+
+    $done({ body })
+
+}
+
+async function official_subtitles(subtitles_urls_data) {
+    let result = []
+
+    if (service == "Disney" || service == "HBOMax") {
+        let subtitles_index = parseInt(url.match(/(\d+)\.vtt/)[1])
+
+        let start = subtitles_index - 3 < 0 ? 0 : subtitles_index - 3
+
+        subtitles_urls_data = subtitles_urls_data.slice(start, subtitles_index + 4)
+    }
+
+    for (var k in subtitles_urls_data) {
+        let options = {
+            url: subtitles_urls_data[k],
+            headers: headers
+        }
+        result.push(await send_request(options, "get"))
+    }
+
+    body = body.replace(/\r/g, "")
+    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+    body = body.replace(/(\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n.+)\n(.+)/g, "$1 $2")
+
+    let timeline = body.match(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+/g)
+
+    for (var i in timeline) {
+        let patt1 = new RegExp(`(${timeline[i]})`)
+        if (setting.line == "s") patt1 = new RegExp(`(${timeline[i]}(\\n.+)+)`)
+
+        let time = timeline[i].match(/^\d+:\d\d:\d\d/)[0]
+
+        let patt2 = new RegExp(`${time}.\\d\\d\\d --> \\d+:\\d\\d:\\d\\d.\\d.+(\\n.+)+`)
+
+        let dialogue = result.join("\n\n").match(patt2)
+
+        if (dialogue) body = body.replace(
+            patt1,
+            `$1\n${dialogue[0]
+                .replace(/\d+:\d\d:\d\d.\d\d\d --> \d+:\d\d:\d\d.\d.+\n/, "")
+                .replace(/\n/, " ")}`
+        )
+    }
+
+    settings[service].s_subtitles_url = url
+    settings[service].subtitles = body
+    settings[service].subtitles_type = setting.type
+    settings[service].subtitles_sl = setting.sl
+    settings[service].subtitles_tl = setting.tl
+    settings[service].subtitles_line = setting.line
+    $persistentStore.write(JSON.stringify(settings))
+
+    $done({ body })
+}
+
+function send_request(options, method) {
+    return new Promise((resolve, reject) => {
+
+        if (method == "get") {
+            $httpClient.get(options, function (error, response, data) {
+                if (error) return reject('Error')
+                resolve(data)
+            })
+        }
+
+        if (method == "post") {
+            $httpClient.post(options, function (error, response, data) {
+                if (error) return reject('Error')
+                resolve(JSON.parse(data))
+            })
+        }
+    })
+}
+
+function groupAgain(data, num) {
+    var result = []
+    for (var i = 0; i < data.length; i += num) {
+        result.push(data.slice(i, i + num))
+    }
+    return result
+}
