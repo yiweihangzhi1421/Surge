@@ -227,9 +227,9 @@ if (url.match(/action=set/)) {
     if (new_setting.t_subtitles_url) settings[service].t_subtitles_url = new_setting.t_subtitles_url
     if (new_setting.subtitles) settings[service].subtitles = new_setting.subtitles
     if (new_setting.subtitles_type) settings[service].subtitles_type = new_setting.subtitles_type
-    if (new_setting.subtitles_sl) settings[service].subtitles_sl = new_setting.subtitles_sl
+    if (new_setting.subtitles_sl) settings[service].subtitles_sl = new_setting.sl
     if (new_setting.subtitles_tl) settings[service].subtitles_tl = new_setting.tl
-    if (new_setting.subtitles_line) settings[service].subtitles_line = new_setting.subtitles_line
+    if (new_setting.subtitles_line) settings[service].subtitles_line = new_setting.line
     if (new_setting.external_subtitles) settings[service].external_subtitles = new_setting.external_subtitles.replace(/\r/g, "")
     $persistentStore.write(JSON.stringify(settings))
     delete settings[service].t_subtitles_url
@@ -439,8 +439,10 @@ async function machine_subtitles(type) {
         for (var j in dialogue) {
             let patt = new RegExp(`(${timeline[j]})`)
             // 这里根据 line 设置调整替换模式
-            if (setting.line == "f") patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`) // 原始语言在前
-            if (setting.line == "s") patt = new RegExp(`(${timeline[j]}(\\n.+)+)`) // 翻译语言在前
+            // 如果 setting.line == "f" (原始语言在前), patt 匹配的是整个对话块 (时间戳+原文)
+            if (setting.line == "f") patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`)
+            // 如果 setting.line == "s" (翻译语言在前), patt 匹配的是时间戳和原始文本
+            if (setting.line == "s") patt = new RegExp(`(${timeline[j]}(\\n.+)+)`)
 
             let patt2 = new RegExp(`~${j}~\\s*(.+)`)
 
@@ -510,7 +512,7 @@ async function official_subtitles(subtitles_urls_data) {
 
         let time = timeline[i].match(/^\d+:\d\d:\d\d/)[0]
 
-        let patt2 = new RegExp(`${time}.\\d\\d\\d --> \\d+:\\d\\d:\\d\\d.\\d.+(\\n.+)+`)
+        let patt2 = new RegExp(`${time}.\\d\\d\\d --> \\d+:\d\d:\\d\d.\\d.+(\\n.+)+`)
 
         let dialogue = result.join("\n\n").match(patt2)
 
