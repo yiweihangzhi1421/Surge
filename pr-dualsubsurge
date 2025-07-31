@@ -1,52 +1,3 @@
-/*
-    Dualsub for Surge by Neurogram
- 
-        - Disney+, Star+, HBO Max, YouTube official bilingual subtitles
-        - Disney+, Star+, HBO Max, Hulu, Netflix, Paramount+, Prime Video, etc. external subtitles
-        - Disney+, Star+, HBO Max, Hulu, Netflix, Paramount+, Prime Video, etc. machine translation bilingual subtitles (Google, DeepL)
-        - Customized language support
- 
-    Manual:
-        Setting tool for Shortcuts: https://www.icloud.com/shortcuts/8ec4a2a3af514282bf27a11050f39fc2
-
-        Surge:
-
-        [Script]
-
-        // all in one
-        Dualsub = type=http-response,pattern=^http.+(media.(dss|star)ott|manifests.v2.api.hbo|hbomaxcdn|nflxvideo|cbs(aa|i)video|cloudfront|akamaihd|avi-cdn|huluim|youtube).(com|net)\/(.+\.vtt($|\?m=\d+)|.+-all-.+\.m3u8.*|hls\.m3u8.+|\?o=\d+&v=\d+&e=.+|\w+\/2\$.+\/[a-zA-Z0-9-]+\.m3u8|api\/timedtext.+),requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
-        Dualsub-setting = type=http-request,pattern=^http.+(setting|general).(media.dssott|hbomaxcdn|nflxvideo|youtube|cbsivideo|cloudfront|huluim).(com|net)\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
-
-        // individual
-        DisneyPlus-Dualsub = type=http-response,pattern=https:\/\/.+media.(dss|star)ott.com\/ps01\/disney\/.+(\.vtt|-all-.+\.m3u8.*),requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
-        DisneyPlus-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.media.dssott.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
- 
-        HBO-Max-Dualsub = type=http-response,pattern=https:\/\/(manifests.v2.api.hbo.com|.+hbomaxcdn.com)\/(hls.m3u8.+|video.+\.vtt),requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
-        HBO-Max-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.hbomaxcdn.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
-
-        Hulu-Dualsub = type=http-response,pattern=^http.+huluim.com\/.+\.vtt$,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
-        Hulu-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.huluim.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
-
-        Netflix-Dualsub = type=http-response,pattern=https:\/\/.+nflxvideo.net\/\?o=\d+&v=\d+&e=.+,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
-        Netflix-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.nflxvideo.net\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
-
-        ParamountPlus-Dualsub = type=http-response,pattern=https:\/\/.+cbs(aa|i)video.com\/.+\.vtt(\?m=\d+)*,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
-        ParamountPlus-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.cbsivideo.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
-
-        Prime-Video-Dualsub = type=http-response,pattern=https:\/\/.+(cloudfront|akamaihd|avi-cdn).net\/(.+\.vtt|\w+\/2\$.+\/[a-zA-Z0-9-]+\.m3u8),requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
-        Prime-Video-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.cloudfront.net\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
-
-        YouTube-Dualsub = type=http-response,pattern=https:\/\/www.youtube.com\/api\/timedtext.+,requires-body=1,max-size=0,timeout=30,script-path=Dualsub.js
-        YouTube-Dualsub-Setting = type=http-request,pattern=https:\/\/setting.youtube.com\/\?action=(g|s)et,requires-body=1,max-size=0,script-path=Dualsub.js
-
-        [MITM]
-        hostname = *.media.dssott.com, *.media.starott.com, *.api.hbo.com, *.hbomaxcdn.com, *.huluim.com, *.nflxvideo.net, *.cbsaavideo.com, *.cbsivideo.com, *.cloudfront.net, *.akamaihd.net, *.avi-cdn.net, *.youtube.com
-
-    Author:
-        Telegram: Neurogram
-        GitHub: Neurogram-R
-*/
-
 let url = $request.url
 let headers = $request.headers
 
@@ -132,11 +83,11 @@ let default_settings = {
         external_subtitles: "null"
     },
     PrimeVideo: {
-        type: "Google", // 翻译类型：Google
-        lang: "Chinese (Simplified) / English", // 显示语言：中英文双语
-        sl: "auto", // 源语言：自动检测
-        tl: "zh-CN", // 目标语言：简体中文
-        line: "s", // 翻译后的语言在上（即中文在上）
+        type: "Google", // 固定为 Google 翻译
+        lang: "English [CC]",
+        sl: "auto",
+        tl: "zh-CN", // 固定为中文简体
+        line: "s", // 固定为中文在上，英文在下
         dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
@@ -175,9 +126,34 @@ let default_settings = {
 
 let settings = $persistentStore.read()
 
-if (!settings) settings = default_settings
+// 如果持久化存储中没有设置，或者用户希望重置，则使用默认设置
+if (!settings || (typeof settings === "string" && JSON.parse(settings).PrimeVideo && JSON.parse(settings).PrimeVideo.type === "Reset")) {
+    settings = default_settings;
+    $persistentStore.write(JSON.stringify(settings)); // 写入默认设置
+} else if (typeof settings == "string") {
+    settings = JSON.parse(settings);
+}
 
-if (typeof (settings) == "string") settings = JSON.parse(settings)
+// 强制覆盖 PrimeVideo 的设置，使其固定
+settings.PrimeVideo = {
+    type: "Google", // 固定为 Google 翻译
+    lang: "English [CC]",
+    sl: "auto",
+    tl: "zh-CN", // 固定为中文简体
+    line: "s", // 固定为中文在上，英文在下
+    dkey: "null", // DeepL API key
+    s_subtitles_url: "null",
+    t_subtitles_url: "null",
+    subtitles: "null",
+    subtitles_type: "null",
+    subtitles_sl: "null",
+    subtitles_tl: "null",
+    subtitles_line: "null",
+    external_subtitles: "null"
+};
+// 写入更新后的设置，确保 PrimeVideo 的设置被固定
+$persistentStore.write(JSON.stringify(settings));
+
 
 let service = ""
 if (url.match(/(dss|star)ott.com/)) service = "Disney"
@@ -202,40 +178,12 @@ if (settings.General) {
 
 if (!service) $done({})
 
-if (!settings[service]) settings[service] = default_settings[service]
+// 获取当前服务的设置，由于 PrimeVideo 已被固定，这里获取到的就是固定后的设置
 let setting = settings[service]
 
-if (url.match(/action=get/)) {
-    delete setting.t_subtitles_url
-    delete setting.subtitles
-    delete setting.external_subtitles
-    $done({ response: { body: JSON.stringify(setting), headers: { "Content-Type": "application/json" } } })
-}
-
-if (url.match(/action=set/)) {
-    let new_setting = JSON.parse($request.body)
-    if (new_setting.type != "External") settings[service].external_subtitles = "null"
-    if (new_setting.type == "Reset") new_setting = default_settings[service]
-    if (new_setting.service && service == "General") settings[service].service = new_setting.service.replace(/\r/g, "")
-    if (new_setting.type) settings[service].type = new_setting.type
-    if (new_setting.lang) settings[service].lang = new_setting.lang
-    if (new_setting.sl) settings[service].sl = new_setting.sl
-    if (new_setting.tl) settings[service].tl = new_setting.tl
-    if (new_setting.line) settings[service].line = new_setting.line
-    if (new_setting.dkey && service != "YouTube") settings[service].dkey = new_setting.dkey
-    if (new_setting.s_subtitles_url) settings[service].s_subtitles_url = new_setting.s_subtitles_url
-    if (new_setting.t_subtitles_url) settings[service].t_subtitles_url = new_setting.t_subtitles_url
-    if (new_setting.subtitles) settings[service].subtitles = new_setting.subtitles
-    if (new_setting.subtitles_type) settings[service].subtitles_type = new_setting.subtitles_type
-    if (new_setting.subtitles_sl) settings[service].subtitles_sl = new_setting.sl
-    if (new_setting.subtitles_tl) settings[service].subtitles_tl = new_setting.tl
-    if (new_setting.subtitles_line) settings[service].subtitles_line = new_setting.line
-    if (new_setting.external_subtitles) settings[service].external_subtitles = new_setting.external_subtitles.replace(/\r/g, "")
-    $persistentStore.write(JSON.stringify(settings))
-    delete settings[service].t_subtitles_url
-    delete settings[service].subtitles
-    delete settings[service].external_subtitles
-    $done({ response: { body: JSON.stringify(settings[service]), headers: { "Content-Type": "application/json" } } })
+// 如果当前服务是 PrimeVideo 且是设置请求，则直接结束，不再处理动态设置
+if (service === "PrimeVideo" && url.match(/action=(g|s)et/)) {
+    $done({});
 }
 
 if (setting.type == "Disable") $done({})
@@ -357,7 +305,7 @@ if (url.match(/\.(web)?vtt/) || service == "Netflix" || service == "General") {
 }
 
 function external_subtitles() {
-    let patt = new RegExp(`(\\d+\\n)*\\d+:\\d\\d:\\d\\d.\\d\\d\\d --> \\d+:\\d\\d:\\d\d.\\d.+(\\n|.)+`)
+    let patt = new RegExp(`(\\d+\\n)*\\d+:\\d\\d:\\d\\d.\\d\\d\\d --> \\d+:\\d\\d:\\d\\d.\\d.+(\\n|.)+`)
     if (!setting.external_subtitles.match(patt)) $done({})
     if (!body.match(patt)) $done({})
     let external = setting.external_subtitles.replace(/(\d+:\d\d:\d\d),(\d\d\d)/g, "$1.$2")
@@ -389,9 +337,9 @@ async function machine_subtitles(type) {
     if (type == "Google") {
         for (var p in s_sentences) {
             let options = {
-                url: `https://translate.google.com/translate_a/single?client=it&dt=t&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`, // Removed dt=qca, dt=rmt, dt=bd, dt=rms, dt=sos, dt=md, dt=gt, dt=ld, dt=ss, dt=ex, otf=2
+                url: `https://translate.google.com/translate_a/single?client=it&dt=qca&dt=t&dt=rmt&dt=bd&dt=rms&dt=sos&dt=md&dt=gt&dt=ld&dt=ss&dt=ex&otf=2&dj=1&hl=en&ie=UTF-8&oe=UTF-8&sl=${setting.sl}&tl=${setting.tl}`,
                 headers: {
-                    "User-Agent": "GoogleTranslate/6.29.59279" // Simplified User-Agent
+                    "User-Agent": "GoogleTranslate/6.29.59279 (iPhone; iOS 15.4; en; iPhone14,2)"
                 },
                 body: `q=${encodeURIComponent(s_sentences[p].join("\n"))}`
             }
@@ -438,33 +386,15 @@ async function machine_subtitles(type) {
 
         for (var j in dialogue) {
             let patt = new RegExp(`(${timeline[j]})`)
-            // 这里根据 line 设置调整替换模式
-            // 如果 setting.line == "f" (原始语言在前), patt 匹配的是整个对话块 (时间戳+原文)
-            if (setting.line == "f") patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`)
-            // 如果 setting.line == "s" (翻译语言在前), patt 匹配的是时间戳和原始文本
-            if (setting.line == "s") patt = new RegExp(`(${timeline[j]}(\\n.+)+)`)
+            if (setting.line == "s") patt = new RegExp(`(${dialogue[j].replace(/(\[|\]|\(|\)|\?)/g, "\\$1")})`)
 
             let patt2 = new RegExp(`~${j}~\\s*(.+)`)
 
-            if (g_t_sentences.match(patt2) && type == "Google") {
-                if (setting.line == "s") { // 翻译语言在前 (中文在上)
-                    body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`)
-                } else { // 原始语言在前 (英文在上) - 这与你的要求相反，但保留逻辑
-                    body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`)
-                }
-            }
+            if (g_t_sentences.match(patt2) && type == "Google") body = body.replace(patt, `$1\n${g_t_sentences.match(patt2)[1]}`)
 
+            if (type == "DeepL") body = body.replace(patt, `$1\n${t_sentences[j]}`)
 
-            // 针对 DeepL 的处理
-            if (type == "DeepL") {
-                if (setting.line == "s") { // 翻译语言在前 (中文在上)
-                    body = body.replace(patt, `$1\n${t_sentences[j]}`)
-                } else { // 原始语言在前 (英文在上) - 这与你的要求相反，但保留逻辑
-                    body = body.replace(patt, `$1\n${t_sentences[j]}`)
-                }
-            }
         }
-
 
         if (service != "Netflix") {
             settings[service].s_subtitles_url = url
@@ -512,7 +442,7 @@ async function official_subtitles(subtitles_urls_data) {
 
         let time = timeline[i].match(/^\d+:\d\d:\d\d/)[0]
 
-        let patt2 = new RegExp(`${time}.\\d\\d\\d --> \\d+:\d\d:\\d\d.\\d.+(\\n.+)+`)
+        let patt2 = new RegExp(`${time}.\\d\\d\\d --> \\d+:\\d\\d:\\d\\d.\\d.+(\\n.+)+`)
 
         let dialogue = result.join("\n\n").match(patt2)
 
