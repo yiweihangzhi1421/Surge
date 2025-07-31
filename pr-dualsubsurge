@@ -134,9 +134,9 @@ let default_settings = {
     PrimeVideo: {
         type: "Google", // Using Google Translate
         lang: "English", // Default displayed language is English (original)
-        sl: "auto", // Source language for translation is English
+        sl: "en", // Source language for translation is English
         tl: "zh-CN", // Target language for translation is Chinese (Simplified)
-        line: "f", // "s" means source (original) language first (on top)
+        line: "s", // "s" means source (original) language first (on top)
         dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
