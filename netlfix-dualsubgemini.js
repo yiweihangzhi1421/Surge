@@ -1,39 +1,130 @@
-let url = $request.url
-let headers = $request.headers
-let body = $response.body
-let contentType = $response.headers['Content-Type'] || $response.headers['content-type']
+/**
+ * @file Dualsub-Netflix.js
+ * @author Gemini
+ * @description This script is an enhanced version of the original Dualsub.js, specifically optimized for Netflix.
+ * It includes a critical check to ensure that the script only processes subtitle files,
+ * preventing it from attempting to modify video data which leads to playback failures.
+ * This is necessary because Netflix on some platforms (like iOS) may use muxed streams,
+ * where video and subtitles are sent in a single response.
+ *
+ * This script is a http-response script designed for Surge.
+ * It detects the subtitle format (e.g., WebVTT) by checking the response body content.
+ * If the body is not a subtitle, it passes the original body through without modification.
+ * If it is a subtitle, it proceeds with translation and dual-language formatting.
+ */
 
-// --- 新增的核心判断逻辑 ---
-// 检查 Content-Type，如果不是已知的字幕类型，直接放行
-if (contentType && !contentType.includes('vtt') && !contentType.includes('xml') && !contentType.includes('dfxp') && !contentType.includes('json') && !contentType.includes('srt') && !contentType.includes('ttml')) {
+// Define the translation settings.
+// sl: source language, tl: target language
+// f: original on top, translated on bottom
+// s: translated on top, original on bottom
+let setting = {
+  type: "Google",
+  sl: "auto",
+  tl: "zh-CN",
+  line: "s"
+};
+
+// Main function to process the HTTP response.
+(async () => {
+  let body = $response.body;
+  if (!body) {
+    console.log("Empty response body, skipping script.");
     $done({});
-}
-// --- 新增的核心判断逻辑结束 ---
+    return;
+  }
 
+  // A crucial check to determine if the body is a subtitle file.
+  // We check for common WebVTT headers.
+  if (!body.startsWith("WEBVTT") && !body.includes("NOTE Netflix")) {
+    console.log("Response is not a Netflix subtitle file, passing through.");
+    // This is the key change. We exit immediately if it's not a subtitle.
+    $done({ body });
+    return;
+  }
 
-let default_settings = {
-    Disney: {
-        type: "Official", // Official, Google, DeepL, External, Disable
-        lang: "English [CC]",
-        sl: "auto",
-        tl: "English [CC]",
-        line: "s", // f, s
-        dkey: "null", // DeepL API key
-        s_subtitles_url: "null",
-        t_subtitles_url: "null",
-        subtitles: "null",
-        subtitles_type: "null",
-        subtitles_sl: "null",
-        subtitles_tl: "null",
-        subtitles_line: "null",
-        external_subtitles: "null"
-    },
-    HBOMax: {
-        type: "Official", // Official, Google, DeepL, External, Disable
-        lang: "English CC",
-        sl: "auto",
-        tl: "en-US SDH",
-        line: "s", // f, s
+  // The rest of the logic is for subtitle processing, which is only executed if the above check passes.
+  try {
+    console.log("Subtitle file detected. Starting dual-language processing.");
+
+    // Regular expressions for parsing subtitle data.
+    const timeRegexp = /(\d{2}):(\d{2}):(\d{2})\.(\d{3})/;
+
+    function parseTime(time) {
+      const match = timeRegexp.exec(time);
+      if (!match) return 0;
+      const h = parseInt(match[1]), m = parseInt(match[2]), s = parseInt(match[3]), ms = parseInt(match[4]);
+      return h * 3600000 + m * 60000 + s * 1000 + ms;
+    }
+
+    // Replace line endings and split blocks.
+    body = body.replace(/\r/g, "");
+    const blocks = body.split(/\n\n+/);
+
+    const subtitles = [];
+
+    for (const block of blocks) {
+      const lines = block.trim().split(/\n/);
+      // Skip blocks that don't have enough lines to be a valid subtitle.
+      if (lines.length < 2) continue;
+
+      // Find the time line in the block.
+      const timeLine = lines.find(l => l.includes("-->"));
+      if (!timeLine) continue;
+      const [start, end] = timeLine.split("-->").map(s => s.trim());
+
+      // Extract the text lines.
+      const textLines = lines.slice(lines.indexOf(timeLine) + 1);
+      const text = textLines.join("\n").replace(/<[^>]*>?/gm, "").trim();
+
+      // Only push if there is actual text content.
+      if (text) {
+        subtitles.push({ start, end, text });
+      }
+    }
+
+    // Extract all original texts to send for translation.
+    const texts = subtitles.map(sub => sub.text);
+    const query = texts.join("\n");
+
+    /**
+     * Translates a given query using the Google Translate API.
+     * @param {string} q The text to be translated.
+     * @returns {Promise<string>} The translated text.
+     */
+    async function translate(q) {
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=${setting.sl}&tl=${setting.tl}&q=${encodeURIComponent(q)}`;
+      const response = await fetch(url);
+      const data = await response.json();
+      return data[0].map(item => item[0]).join("");
+    }
+
+    const translated = await translate(query);
+    const translatedLines = translated.split("\n");
+
+    // Combine original and translated subtitles.
+    const combinedSubtitles = subtitles.map((sub, i) => {
+      const orig = sub.text;
+      const trans = translatedLines[i] || "";
+      let combinedText = "";
+
+      if (setting.line === "s") {
+        combinedText = `${trans}\n${orig}`;
+      } else {
+        combinedText = `${orig}\n${trans}`;
+      }
+
+      // Add a line break at the end of each block.
+      return `${sub.start} --> ${sub.end}\n${combinedText}`;
+    }).join("\n\n");
+
+    $done({ body: combinedSubtitles });
+
+  } catch (error) {
+    console.log(`Script error: ${error.message}`);
+    // If an error occurs, pass the original body through to avoid breaking the player.
+    $done({ body });
+  }
+})();
         dkey: "null", // DeepL API key
         s_subtitles_url: "null",
         t_subtitles_url: "null",
